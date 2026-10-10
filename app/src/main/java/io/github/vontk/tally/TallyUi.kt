@@ -46,13 +46,6 @@ import kotlinx.coroutines.*
 
 private fun color(hex: String) = Color(hex.toColorInt())
 
-private fun readableOn(background: Color): Color {
-    val dark = Color(0xFF211D35)
-    val darkContrast = (background.luminance() + .05f) / (dark.luminance() + .05f)
-    val lightContrast = 1.05f / (background.luminance() + .05f)
-    return if (darkContrast >= lightContrast) dark else Color.White
-}
-
 private fun shortDate(day: LocalDate, locale: Locale) =
     day.format(DateTimeFormatter.ofPattern("MMM d", locale))
 
@@ -93,11 +86,16 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
     val muted = if (state.light) Color(0xFF77737E) else Color(0xFF939399)
     val line = if (state.light) Color(0xFFDEDCE4) else Color(0xFF303034)
     val scheme = if (state.light) lightColorScheme() else darkColorScheme()
+    val actionBackgrounds = listOf(background, panel, scheme.surfaceContainerHigh)
+    val actionBackground =
+        if (state.light) actionBackgrounds.minBy { it.luminance() }
+        else actionBackgrounds.maxBy { it.luminance() }
+    val actionColor = actionAccent(accent, actionBackground)
     MaterialTheme(
         colorScheme =
             scheme.copy(
-                primary = accent,
-                onPrimary = readableOn(accent),
+                primary = actionColor,
+                onPrimary = readableOn(actionColor),
                 background = background,
                 onBackground = text,
                 surface = panel,
@@ -446,6 +444,7 @@ private fun Heading(state: TallyState) {
 @Composable
 private fun CounterScreen(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
+    val accent = state.selected?.color?.let(::color) ?: color(Palette[0])
     val haptic = LocalHapticFeedback.current
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) .96f else 1f, label = "Tally tap")
@@ -466,11 +465,11 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     Modifier.size(232.dp)
                         .border(
                             1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = .1f),
+                            accent.copy(alpha = .1f),
                             CircleShape,
                         )
                         .background(
-                            MaterialTheme.colorScheme.primary.copy(alpha = .04f),
+                            accent.copy(alpha = .04f),
                             CircleShape,
                         ),
                     contentAlignment = Alignment.Center,
@@ -478,7 +477,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     Column(
                         Modifier.size(206.dp)
                             .scale(scale)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            .background(accent, CircleShape)
                             .clickable(role = Role.Button) {
                                 model.tally()
                                 if (!state.preview) {
@@ -500,13 +499,13 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                                 if ((state.counts[state.today] ?: 0) > 9999) 48.sp else 66.sp,
                             fontWeight = FontWeight.Normal,
                             letterSpacing = (-3).sp,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = readableOn(accent),
                         )
                         Text(
                             "TALLIES TODAY  +",
                             fontSize = 10.sp,
                             letterSpacing = 1.5.sp,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = readableOn(accent),
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
@@ -580,7 +579,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                 Modifier.fillMaxWidth().padding(vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Dot(MaterialTheme.colorScheme.primary)
+                Dot(accent)
                 Spacer(Modifier.width(12.dp))
                 val day = Moments.day(tally.timestamp, state.zone)
                 Text(
@@ -1127,7 +1126,7 @@ private fun SettingsScreen(model: TallyViewModel) {
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
         HorizontalDivider(Modifier.padding(vertical = 24.dp))
-        Text("Tally 1.0.0", fontWeight = FontWeight.Medium)
+        Text("Tally 1.0.1", fontWeight = FontWeight.Medium)
         Text(
             "Make a moment count.\nSaved on this device · Works offline",
             fontSize = 12.sp,

@@ -4,7 +4,7 @@ A small, native Android app for making a moment count. Inspired by [the original
 
 ## Install
 
-Download `tally-1.0.0.apk` from this repository's **Releases** page. Android 8.0 or newer is required. Allow installation from the app used to open the APK when Android prompts you.
+Download `tally-1.0.1.apk` from this repository's **Releases** page. Android 8.0 or newer is required. Allow installation from the app used to open the APK when Android prompts you.
 
 ## Features
 
@@ -43,7 +43,7 @@ Use the original signing key for every update. The initial key is stored locally
 ./scripts/sign-release.sh
 ```
 
-The directory must contain `release.jks` (alias `tally`) and a `password` file containing its password. The script produces `artifacts/tally-1.0.0.apk` and `artifacts/SHA256SUMS`. Never commit or upload the key/password to a release or artifact.
+The directory must contain `release.jks` (alias `tally`) and a `password` file containing its password. The script produces `artifacts/tally-1.0.1.apk` and `artifacts/SHA256SUMS`. Never commit or upload the key/password to a release or artifact.
 
 ## Data and backup
 
