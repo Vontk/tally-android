@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -669,6 +670,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     Column(
                         Modifier.size(220.dp)
                             .scale(scale)
+                            .clip(CircleShape)
                             .background(accent, CircleShape)
                             .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
                             .clickable(enabled = !state.preview, role = Role.Button) {

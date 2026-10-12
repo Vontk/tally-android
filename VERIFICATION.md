@@ -1,3 +1,11 @@
+# Release verification — 1.1.2
+
+Adaptive launcher icon with a dark background and Android themed-icon support; circular clipping for tally tap feedback. README shortened and native design screenshots included.
+
+Release APK compilation, signing, source revision, archive alignment and published checksum are checked for publication. Automated tests were not rerun. Motorola physical-device appearance has not been checked locally.
+
+## Historical verification for 1.1.1
+
 # Release verification — 1.1.1
 
 Native subject paging update. Final release compilation, APK signatures, source revision, 16 KB archive alignment and uploaded checksum are checked for publication. Automated test suites were not rerun for this update.
