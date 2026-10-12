@@ -1719,6 +1719,7 @@ private fun SettingsScreen(model: TallyViewModel) {
     val confirming by model.confirmRestore.collectAsState()
     val busy by model.backupBusy.collectAsState()
     val error by model.backupError.collectAsState()
+    val errorIsExport by model.backupErrorIsExport.collectAsStateWithLifecycle()
     var exportBeforeRestore by rememberSaveable { mutableStateOf(false) }
     val exporter =
         rememberLauncherForActivityResult(
@@ -1869,8 +1870,7 @@ private fun SettingsScreen(model: TallyViewModel) {
                         enabled = !busy,
                     ) {
                         Text(
-                            if (model.backupErrorIsExport.value) "Try another location"
-                            else "Choose another file",
+                            if (errorIsExport) "Try another location" else "Choose another file",
                             fontSize = 12.sp,
                         )
                     }
