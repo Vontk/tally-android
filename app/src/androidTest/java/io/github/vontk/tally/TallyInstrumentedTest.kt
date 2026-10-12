@@ -45,7 +45,7 @@ class TallyInstrumentedTest {
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
-        rule.onNodeWithText("Undo last tally").performClick()
+        rule.onNodeWithText("Undo last tally").performScrollTo().performClick()
         awaitTallyCount(19)
         rule.activityRule.scenario.recreate()
         rule.waitUntil(10000) {
