@@ -24,16 +24,21 @@ object Moments {
     }
 
     fun preview(today: LocalDate, zone: ZoneId, subjectId: String): List<Tally> = buildList {
-        for (offset in 49 downTo 0) {
-            val count = if (offset == 0) 7 else (offset * 13 + 5) % 12
-            repeat(count) { j ->
+        // Handoff sample: 7 today, 38 in seven days, a five-day streak, 148 total.
+        val recent = listOf(7, 9, 6, 8, 5, 0, 3, 5, 8, 1, 4, 7)
+        val times = listOf("07:12", "07:44", "08:18", "08:18", "09:04", "09:21", "09:41")
+        fun addDay(offset: Int, count: Int) {
+            repeat(count) { index ->
+                val time =
+                    if (offset == 0) LocalTime.parse(times[index])
+                    else LocalTime.of(7 + (index * 3) % 16, (index * 17 + offset * 7) % 60)
                 add(
                     Tally(
                         size.toLong() + 1,
                         subjectId,
                         today
                             .minusDays(offset.toLong())
-                            .atTime(7 + (j * 3) % 16, (j * 17 + offset * 7) % 60)
+                            .atTime(time)
                             .atZone(zone)
                             .toInstant()
                             .toEpochMilli(),
@@ -41,5 +46,8 @@ object Moments {
                 )
             }
         }
+        val olderStart = maxOf(12, today.dayOfMonth + 1)
+        for (index in 10 downTo 0) addDay(olderStart + index, if (index == 10) 5 else 8)
+        for (offset in recent.indices.reversed()) addDay(offset, recent[offset])
     }
 }

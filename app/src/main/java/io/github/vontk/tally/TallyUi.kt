@@ -27,9 +27,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
@@ -52,13 +54,14 @@ private fun shortDate(day: LocalDate, locale: Locale) =
 private fun stamp(timestamp: Long, zone: ZoneId, locale: Locale) =
     Instant.ofEpochMilli(timestamp)
         .atZone(zone)
-        .format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale))
+        .format(DateTimeFormatter.ofPattern("HH:mm", locale))
 
 private val Shape = RoundedCornerShape(12.dp)
 
 @Composable
 fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
     val state by model.state.collectAsStateWithLifecycle()
+    val backupBusy by model.backupBusy.collectAsState()
     val uiScope = rememberCoroutineScope()
     LifecycleResumeEffect(model) {
         model.refreshClock()
@@ -81,17 +84,23 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
     val accent = state.selected?.color?.let(::color) ?: color(Palette[0])
     val background = if (state.light) Color(0xFFF8F7FA) else Color(0xFF171719)
     val side = if (state.light) Color(0xFFF0EFF3) else Color(0xFF131315)
-    val panel = if (state.light) Color.White else Color(0xFF1E1E21)
+    val panel = if (state.light) Color.White else Color(0xFF202023)
     val text = if (state.light) Color(0xFF27252D) else Color(0xFFECECEF)
-    val muted = if (state.light) Color(0xFF77737E) else Color(0xFF939399)
-    val line = if (state.light) Color(0xFFDEDCE4) else Color(0xFF303034)
+    val muted = if (state.light) Color(0xFF706B79) else Color(0xFFA2A2AA)
+    val line = if (state.light) Color(0xFFDDDCE3) else Color(0xFF343438)
     val scheme = if (state.light) lightColorScheme() else darkColorScheme()
-    val actionBackgrounds = listOf(background, panel, scheme.surfaceContainerHigh)
+    val actionBackgrounds = listOf(background, panel)
     val actionBackground =
         if (state.light) actionBackgrounds.minBy { it.luminance() }
         else actionBackgrounds.maxBy { it.luminance() }
     val actionColor = actionAccent(accent, actionBackground)
     MaterialTheme(
+        typography =
+            Typography(
+                bodyLarge = TextStyle(fontSize = 15.sp),
+                bodyMedium = TextStyle(fontSize = 14.sp),
+                bodySmall = TextStyle(fontSize = 12.sp),
+            ),
         colorScheme =
             scheme.copy(
                 primary = actionColor,
@@ -105,32 +114,43 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                 surfaceVariant = side,
                 secondaryContainer = accent.copy(alpha = .12f),
                 onSecondaryContainer = text,
-            )
+                surfaceContainer = panel,
+                surfaceContainerHigh = panel,
+                surfaceContainerHighest = panel,
+                error = if (state.light) Color(0xFFAA333B) else Color(0xFFEC969A),
+                onError = if (state.light) Color.White else Color(0xFF291519),
+            ),
     ) {
         LaunchedEffect(state.light) { systemBars(state.light) }
-        var editor by remember { mutableStateOf(false) }
+        val editor by model.editorVisible.collectAsState()
+        val saving by model.editBusy.collectAsState()
+        var deletingSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
+        val deletingSubject = state.subjects.find { it.subject.id == deletingSubjectId }?.subject
+        var subjectPicker by rememberSaveable { mutableStateOf(false) }
         val counterFocus = remember { FocusRequester() }
-        LaunchedEffect(state.screen, state.selected?.id, editor) {
-            if (state.screen == "counter" && !editor && state.selected != null)
+        LaunchedEffect(state.screen, state.selected?.id, editor, subjectPicker) {
+            if (state.screen == "counter" && !editor && !subjectPicker && state.selected != null)
                 counterFocus.requestFocus()
         }
-        var editingSubject by remember { mutableStateOf<Subject?>(null) }
+        val editingId by model.editorSubjectId.collectAsState()
+        val editingSubject = state.subjects.find { it.subject.id == editingId }?.subject
         val snackbar = remember { SnackbarHostState() }
         LaunchedEffect(state.message) {
             state.message?.let { message ->
-                snackbar.showSnackbar(message)
-                model.clearMessage()
+                val result =
+                    snackbar.showSnackbar(
+                        message,
+                        actionLabel = if (message.startsWith("Tally added")) "Undo" else null,
+                        duration = SnackbarDuration.Short,
+                    )
+                if (result == SnackbarResult.ActionPerformed)
+                    model.undoFeedback(model.feedbackTally)
+                if (model.state.value.message == message) model.clearMessage()
             }
         }
-        BackHandler(enabled = state.screen != "counter") { model.screen("counter") }
-        val create = {
-            editingSubject = null
-            editor = true
-        }
-        val edit = {
-            editingSubject = state.selected
-            editor = true
-        }
+        BackHandler(enabled = state.screen != "counter") { if (!backupBusy) model.back() }
+        val create = { model.openEditor(null) }
+        val edit = { model.openEditor(state.selected?.id) }
         Surface(color = background, modifier = Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                 val wide = maxWidth >= 700.dp
@@ -140,21 +160,37 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                     bottomBar = {
                         if (!wide)
                             NavigationBar(
-                                containerColor = side,
+                                containerColor = panel,
                                 tonalElevation = 0.dp,
                                 windowInsets = WindowInsets(0),
                             ) {
                                 listOf("counter" to "Counter", "history" to "History").forEach {
                                     (destination, label) ->
                                     NavigationBarItem(
-                                        selected = state.screen == destination,
+                                        selected = model.primaryScreen() == destination,
+                                        enabled = !backupBusy,
                                         onClick = { model.screen(destination) },
                                         icon = {
                                             Glyph(
                                                 if (destination == "counter") "count" else "history"
                                             )
                                         },
-                                        label = { Text(label) },
+                                        label = {
+                                            Text(
+                                                label,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Normal,
+                                            )
+                                        },
+                                        colors =
+                                            NavigationBarItemDefaults.colors(
+                                                selectedIconColor =
+                                                    MaterialTheme.colorScheme.primary,
+                                                selectedTextColor =
+                                                    MaterialTheme.colorScheme.onSurface,
+                                                unselectedIconColor = muted,
+                                                unselectedTextColor = muted,
+                                            ),
                                     )
                                 }
                             }
@@ -170,68 +206,79 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Brand(Modifier.weight(1f))
-                                    IconButton(onClick = model::toggleTheme) {
-                                        Glyph(
-                                            if (state.light) "moon" else "sun",
-                                            description =
-                                                "Switch to ${if (state.light) "dark" else "light"} theme",
-                                        )
-                                    }
-                                    IconButton(onClick = { model.screen("settings") }) {
-                                        Glyph("settings", description = "Settings and backup")
+                                    TextButton(
+                                        onClick = { model.screen("settings") },
+                                        modifier =
+                                            Modifier.heightIn(min = 48.dp).background(panel, Shape),
+                                    ) {
+                                        Glyph("settings")
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Settings", color = muted, fontSize = 13.sp)
                                     }
                                 }
-                                Text(
-                                    "YOUR SUBJECTS",
-                                    color = muted,
-                                    fontSize = 10.sp,
-                                    letterSpacing = 1.8.sp,
-                                    modifier =
-                                        Modifier.padding(start = 22.dp, top = 12.dp, bottom = 4.dp),
-                                )
+                            }
+                            if (!wide && state.screen != "settings" && state.selected != null) {
                                 Row(
                                     Modifier.fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 16.dp),
+                                        .padding(horizontal = 20.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    state.subjects.forEach { subject ->
-                                        SubjectChip(
-                                            subject,
-                                            subject.subject.id == state.selected?.id,
+                                    Surface(
+                                        onClick = { subjectPicker = true },
+                                        modifier = Modifier.weight(1f),
+                                        color = panel,
+                                        shape = RoundedCornerShape(14.dp),
+                                        border = BorderStroke(1.dp, line),
+                                    ) {
+                                        Row(
+                                            Modifier.heightIn(min = 52.dp)
+                                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            model.select(subject.subject.id)
+                                            Dot(accent, 10.dp)
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                state.selected?.name ?: "Loading…",
+                                                Modifier.weight(1f),
+                                                fontSize = 15.sp,
+                                            )
+                                            Glyph("down", description = "Choose subject")
                                         }
                                     }
-                                    TextButton(onClick = create) {
-                                        Glyph("plus")
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("New subject", color = muted)
+                                    TextButton(
+                                        onClick = edit,
+                                        enabled = state.selected != null,
+                                        modifier =
+                                            Modifier.padding(start = 10.dp)
+                                                .heightIn(min = 52.dp)
+                                                .border(1.dp, line, Shape)
+                                                .background(panel, Shape),
+                                    ) {
+                                        Text("Edit")
                                     }
                                 }
                             }
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .heightIn(min = 54.dp)
-                                    .padding(horizontal = 22.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Dot(accent)
-                                Spacer(Modifier.width(9.dp))
-                                Text(
-                                    state.selected?.name ?: "Loading…",
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 2,
-                                    fontSize = 13.sp,
-                                )
-                                TextButton(onClick = edit, enabled = state.selected != null) {
-                                    Glyph("edit")
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Edit subject", fontSize = 12.sp, color = muted)
+                            if (wide) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Dot(accent)
+                                    Spacer(Modifier.width(9.dp))
+                                    Text(
+                                        state.selected?.name ?: "Loading…",
+                                        Modifier.weight(1f),
+                                        fontSize = 15.sp,
+                                    )
+                                    TextButton(onClick = edit, enabled = state.selected != null) {
+                                        Text("Edit subject")
+                                    }
                                 }
                             }
-                            HorizontalDivider(color = line)
+                            if (state.preview) PreviewBanner(model)
                             if (state.screen == "settings") SettingsScreen(model)
+                            else if (state.selected == null)
+                                EmptySubjects(create) { model.screen("settings") }
                             else
                                 Box(
                                     Modifier.weight(1f).fillMaxWidth(),
@@ -249,7 +296,8 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                                         event.type == KeyEventType.KeyDown &&
                                                         event.nativeKeyEvent.repeatCount == 0 &&
                                                         state.screen == "counter" &&
-                                                        !editor
+                                                        !editor &&
+                                                        !subjectPicker
                                                 ) {
                                                     model.tally()
                                                     true
@@ -265,15 +313,98 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                 }
             }
         }
+        if (subjectPicker) {
+            ModalBottomSheet(onDismissRequest = { subjectPicker = false }, containerColor = panel) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Your subjects",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { subjectPicker = false }) { Text("Done") }
+                }
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(state.subjects, key = { it.subject.id }) { subject ->
+                        ListItem(
+                            headlineContent = { Text(subject.subject.name) },
+                            supportingContent = { Text("${subject.count} tallies") },
+                            leadingContent = { Dot(color(subject.subject.color), 12.dp) },
+                            trailingContent = {
+                                if (subject.subject.id == state.selected?.id)
+                                    Glyph("check", description = "Selected")
+                            },
+                            colors =
+                                ListItemDefaults.colors(
+                                    containerColor =
+                                        if (subject.subject.id == state.selected?.id)
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        else panel
+                                ),
+                            modifier =
+                                Modifier.background(
+                                        if (subject.subject.id == state.selected?.id)
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        else Color.Transparent,
+                                        Shape,
+                                    )
+                                    .clickable {
+                                        model.select(subject.subject.id)
+                                        subjectPicker = false
+                                    }
+                                    .heightIn(min = 64.dp),
+                        )
+                    }
+                }
+                Button(
+                    shape = Shape,
+                    onClick = {
+                        subjectPicker = false
+                        create()
+                    },
+                    modifier =
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Glyph("plus")
+                    Spacer(Modifier.width(8.dp))
+                    Text("New subject")
+                }
+            }
+        }
         if (editor)
             ProfileEditor(
                 editingSubject,
                 Palette[state.subjects.size % Palette.size],
-                { editor = false },
-            ) { name, accentHex ->
-                model.saveSubject(editingSubject?.id, name, accentHex)
-                editor = false
+                busy = saving,
+                dismiss = model::closeEditor,
+                delete =
+                    if (editingSubject == null || state.preview) null
+                    else ({ deletingSubjectId = editingSubject?.id }),
+                save = { name, accentHex ->
+                    model.saveSubject(editingSubject?.id, name, accentHex)
+                },
+            )
+        state.entries
+            .find { it.id == state.momentId }
+            ?.let { tally ->
+                MomentDetails(state, tally, model)
             }
+        deletingSubject?.let { subject ->
+            DeleteSubjectConfirmation(
+                subject.name,
+                state.subjects.find { it.subject.id == subject.id }?.count?.toInt() ?: 0,
+                busy = saving,
+                onCancel = { deletingSubjectId = null },
+                onConfirm = {
+                    model.deleteSubject(subject.id) { success ->
+                        if (success) deletingSubjectId = null
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -282,8 +413,13 @@ private fun Brand(modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Glyph("brand", modifier = Modifier.size(26.dp))
         Spacer(Modifier.width(10.dp))
-        Text("tally", fontSize = 25.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
-        Text(".", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 25.sp)
+        Text(
+            "tally.",
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-1).sp,
+        )
     }
 }
 
@@ -297,7 +433,7 @@ private fun Sidebar(state: TallyState, model: TallyViewModel, create: () -> Unit
                 modifier =
                     Modifier.fillMaxWidth()
                         .background(
-                            if (state.screen == screen)
+                            if (model.primaryScreen() == screen)
                                 MaterialTheme.colorScheme.outline.copy(alpha = .4f)
                             else Color.Transparent,
                             Shape,
@@ -397,47 +533,30 @@ private fun SubjectChip(subject: SubjectCount, selected: Boolean, onClick: () ->
 private fun Heading(state: TallyState) {
     val locale = LocalLocale.current.platformLocale
     val counter = state.screen == "counter"
-    Column(Modifier.padding(top = 28.dp, bottom = 14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
             Text(
-                if (counter) "ONE MOMENT AT A TIME" else "A RECORD OF YOUR MOMENTS",
-                modifier = Modifier.weight(1f),
-                fontSize = 10.sp,
-                letterSpacing = 1.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (counter) "Make it count." else "History",
+                fontSize = 24.sp,
+                lineHeight = 28.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-.5).sp,
             )
             Text(
-                if (state.preview) "Preview data"
-                else if (counter) shortDate(state.today, locale)
-                else "${state.entries.size} total tallies",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 10.sp,
-                modifier =
-                    Modifier.border(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = .25f),
-                            CircleShape,
-                        )
-                        .background(
-                            MaterialTheme.colorScheme.primary.copy(alpha = .06f),
-                            CircleShape,
-                        )
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                if (counter) state.today.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", locale))
+                else if (state.view == "hours")
+                    "${state.counts[state.date] ?: 0} tallies on this day"
+                else if (state.view == "month")
+                    "${state.counts.filterKeys { YearMonth.from(it) == state.month }.values.sum()} tallies this month"
+                else "${state.entries.size} recorded moments",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
-        Text(
-            if (counter) "Make it count." else "Your history.",
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = (-1).sp,
-            modifier = Modifier.padding(top = 10.dp, bottom = 7.dp),
-        )
-        Text(
-            if (counter) "Small moments. A little more intentional."
-            else "Every tally has a place in time.",
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -445,6 +564,7 @@ private fun Heading(state: TallyState) {
 private fun CounterScreen(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
     val accent = state.selected?.color?.let(::color) ?: color(Palette[0])
+    val fontScale = LocalDensity.current.fontScale
     val haptic = LocalHapticFeedback.current
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) .96f else 1f, label = "Tally tap")
@@ -458,14 +578,14 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
         item { Heading(state) }
         item {
             Column(
-                Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 22.dp),
+                Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
-                    Modifier.size(232.dp)
+                    Modifier.size(244.dp)
                         .border(
                             1.dp,
-                            accent.copy(alpha = .1f),
+                            MaterialTheme.colorScheme.outline,
                             CircleShape,
                         )
                         .background(
@@ -475,10 +595,11 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(
-                        Modifier.size(206.dp)
+                        Modifier.size(220.dp)
                             .scale(scale)
                             .background(accent, CircleShape)
-                            .clickable(role = Role.Button) {
+                            .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                            .clickable(enabled = !state.preview, role = Role.Button) {
                                 model.tally()
                                 if (!state.preview) {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -496,33 +617,52 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                         Text(
                             (state.counts[state.today] ?: 0).toString(),
                             fontSize =
-                                if ((state.counts[state.today] ?: 0) > 9999) 48.sp else 66.sp,
+                                if ((state.counts[state.today] ?: 0) > 9999)
+                                    (48f / fontScale.coerceAtLeast(1f)).sp
+                                else (66f / (fontScale / 1.3f).coerceAtLeast(1f)).sp,
                             fontWeight = FontWeight.Normal,
                             letterSpacing = (-3).sp,
                             color = readableOn(accent),
                         )
                         Text(
-                            "TALLIES TODAY  +",
-                            fontSize = 10.sp,
-                            letterSpacing = 1.5.sp,
+                            "TALLIES TODAY",
+                            fontSize = 12.sp,
+                            letterSpacing = 1.sp,
                             color = readableOn(accent),
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
                 }
-                Text(
-                    "Tap to capture a moment",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 23.dp),
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 8.dp),
+                ) {
+                    if (!state.preview) {
+                        CompositionLocalProvider(
+                            LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant
+                        ) {
+                            Glyph("plus", Modifier.size(16.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Text(
+                        if (state.preview) "Tallying is disabled in preview." else "Tap to add",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier,
+                    )
+                }
                 TextButton(
                     onClick = model::undo,
+                    modifier =
+                        Modifier.padding(top = 8.dp)
+                            .heightIn(min = 48.dp)
+                            .background(MaterialTheme.colorScheme.surface, CircleShape),
                     enabled = state.entries.isNotEmpty() && !state.preview,
                 ) {
                     Glyph("undo")
                     Spacer(Modifier.width(7.dp))
-                    Text("Undo last tally", fontSize = 12.sp)
+                    Text("Undo last tally", fontSize = 13.sp)
                 }
             }
         }
@@ -531,7 +671,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                 Modifier.fillMaxWidth()
                     .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
                     .background(MaterialTheme.colorScheme.surface, Shape)
-                    .padding(vertical = 18.dp)
+                    .padding(vertical = 12.dp)
             ) {
                 Stat(
                     "Last 7 days",
@@ -541,7 +681,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                 )
                 Stat("All time", state.entries.size, "moments", Modifier.weight(1f))
                 Stat(
-                    "Current streak",
+                    "Streak",
                     Moments.streak(state.counts, state.today),
                     "days",
                     Modifier.weight(1f),
@@ -556,9 +696,9 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                 Text("Recent moments", modifier = Modifier.weight(1f), fontSize = 14.sp)
                 TextButton(onClick = { model.screen("history") }) {
                     Text(
-                        "View history ↗",
+                        "View all",
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
@@ -576,7 +716,10 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
         items(recent, key = { it.id }) { tally ->
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                Modifier.fillMaxWidth()
+                    .clickable { model.openMoment(tally.id) }
+                    .heightIn(min = 48.dp)
+                    .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Dot(accent)
@@ -592,17 +735,8 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-        }
-        item {
-            Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
-                TextButton(onClick = model::togglePreview) {
-                    Text(
-                        if (state.preview) "Exit example preview" else "Explore with example data",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Spacer(Modifier.width(6.dp))
+                Glyph("right")
             }
         }
     }
@@ -611,101 +745,195 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
 @Composable
 private fun Stat(label: String, value: Int, unit: String, modifier: Modifier) {
     Column(modifier.padding(horizontal = 12.dp)) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-        Text(value.toString(), fontSize = 24.sp, modifier = Modifier.padding(top = 8.dp))
-        Text(unit, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text(value.toString(), fontSize = 24.sp, lineHeight = 28.sp)
+        Text(unit, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 private fun ColumnScope.HistoryScreen(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
+    val fontScale = LocalDensity.current.fontScale
+    var picking by rememberSaveable { mutableStateOf(false) }
     Heading(state)
-    Row(
-        Modifier.fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant, Shape)
-            .padding(4.dp)
-    ) {
-        listOf("days", "hours", "month").forEach { view ->
-            TextButton(
-                onClick = { model.view(view) },
+    Segments(
+        listOf("days" to "Days", "hours" to "Hours", "month" to "Month"),
+        state.view,
+        model::view,
+    )
+    if (state.view != "days") {
+        FlowRow(
+            Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            IconButton(
+                onClick = { model.shift(-1) },
                 modifier =
-                    Modifier.weight(1f)
-                        .background(
-                            if (state.view == view)
-                                MaterialTheme.colorScheme.outline.copy(alpha = .4f)
-                            else Color.Transparent,
-                            RoundedCornerShape(8.dp),
-                        ),
+                    Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, Shape),
             ) {
-                Text(
-                    view.replaceFirstChar { it.uppercase() },
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-    }
-    if (state.view != "days")
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { model.shift(-1) }) {
                 Glyph(
                     "left",
                     description = "Previous ${if (state.view == "month") "month" else "day"}",
                 )
             }
-            Text(
-                if (state.view == "month")
-                    state.month.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale))
-                else
-                    state.date.format(
-                        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
-                    ),
-                modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center,
-                fontSize = 13.sp,
-            )
-            IconButton(onClick = { model.shift(1) }) {
+            Surface(
+                onClick = { picking = true },
+                color = MaterialTheme.colorScheme.surface,
+                shape = Shape,
+                modifier = Modifier.weight(1f).widthIn(min = 120.dp).heightIn(min = 48.dp),
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        if (state.view == "month")
+                            state.month.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale))
+                        else
+                            state.date.format(
+                                DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+                                    .withLocale(locale)
+                            ),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        "Choose date",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            IconButton(
+                onClick = { model.shift(1) },
+                modifier =
+                    Modifier.size(48.dp).background(MaterialTheme.colorScheme.surface, Shape),
+            ) {
                 Glyph(
                     "right",
                     description = "Next ${if (state.view == "month") "month" else "day"}",
                 )
             }
-            TextButton(onClick = model::today) { Text("Today", fontSize = 12.sp) }
-        }
-    else
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = model::togglePreview) {
-                Text(if (state.preview) "Exit preview" else "Preview data", fontSize = 12.sp)
+            TextButton(
+                onClick = model::today,
+                modifier =
+                    Modifier.heightIn(min = 48.dp)
+                        .background(MaterialTheme.colorScheme.surface, Shape),
+            ) {
+                Text("Today", fontSize = 12.sp)
             }
         }
+    } else {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Earlier days are above today",
+                Modifier.weight(1f),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = model::today) { Text("Today", fontSize = 12.sp) }
+        }
+    }
     Box(Modifier.weight(1f).fillMaxWidth()) {
         when (state.view) {
             "days" -> DaysView(state, model)
-            "hours" -> HoursView(state)
+            "hours" -> HoursView(state, model)
             else -> MonthView(state, model)
         }
     }
-    Text(
-        when (state.view) {
-            "days" -> "Scroll up for earlier days. Select a day to see its timestamps."
-            "hours" -> "Each dot is one tally, placed at its recorded minute."
-            else -> "A deeper color means more tallies. Select a day to explore."
-        },
-        fontSize = 11.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 12.dp),
-    )
+    if (state.view != "days" && fontScale < 1.5f)
+        Text(
+            if (state.view == "hours") "Tap a dot for details. Scroll for more hours."
+            else "Select a day to see its tallies.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 12.dp),
+        )
+    if (picking) {
+        val day = if (state.view == "month") state.month.atDay(1) else state.date
+        val picker =
+            rememberDatePickerState(
+                initialSelectedDateMillis =
+                    day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+                yearRange = 1900..2200,
+            )
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        picker.selectedDateMillis?.let {
+                            model.chooseDate(
+                                Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                            )
+                        }
+                        picking = false
+                    },
+                    enabled = picker.selectedDateMillis != null,
+                ) {
+                    Text(if (state.view == "month") "Show month" else "Show day")
+                }
+            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+        ) {
+            DatePicker(
+                picker,
+                title = { Text("Choose date", Modifier.padding(24.dp), fontSize = 24.sp) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun Segments(items: List<Pair<String, String>>, selected: String, click: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
+            .background(MaterialTheme.colorScheme.surface, Shape)
+            .padding(4.dp)
+    ) {
+        items.forEach { (id, label) ->
+            TextButton(
+                onClick = { click(id) },
+                modifier =
+                    Modifier.weight(1f)
+                        .heightIn(min = 40.dp)
+                        .background(
+                            if (id == selected) MaterialTheme.colorScheme.secondaryContainer
+                            else Color.Transparent,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .semantics { this.selected = id == selected },
+            ) {
+                Text(
+                    label,
+                    fontSize = 14.sp,
+                    color =
+                        if (id == selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
 private fun DaysView(state: TallyState, model: TallyViewModel) {
+    val todayRequests by model.todayRequests.collectAsState()
     val locale = LocalLocale.current.platformLocale
     val earliest = state.counts.keys.filter { it <= state.today }.minOrNull() ?: state.today
     val span =
         maxOf(30, (ChronoUnit.DAYS.between(earliest, state.today) + 1).coerceAtMost(3660).toInt())
-    val list = rememberLazyListState(initialFirstVisibleItemIndex = span - 1)
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = maxOf(0, span - 7))
+    LaunchedEffect(state.date, state.today, state.selected?.id, state.preview, todayRequests) {
+        val index =
+            (span - 1 - ChronoUnit.DAYS.between(state.date, state.today))
+                .toInt()
+                .coerceIn(0, span - 1)
+        list.scrollToItem(maxOf(0, index - 6))
+    }
     LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
         items(span, key = { state.today.minusDays((span - it - 1).toLong()).toString() }) { index ->
             val date = state.today.minusDays((span - index - 1).toLong())
@@ -715,128 +943,224 @@ private fun DaysView(state: TallyState, model: TallyViewModel) {
                 Modifier.fillMaxWidth()
                     .clickable { model.openDay(date) }
                     .semantics { contentDescription = "$date, $count tallies" }
-                    .padding(vertical = 16.dp),
+                    .heightIn(min = 56.dp)
+                    .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     date.dayOfMonth.toString(),
                     fontSize = 27.sp,
                     letterSpacing = (-1).sp,
-                    modifier = Modifier.width(44.dp),
+                    modifier = Modifier.widthIn(min = 48.dp),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text(date.format(DateTimeFormatter.ofPattern("EEEE", locale)), fontSize = 13.sp)
+                    Text(date.format(DateTimeFormatter.ofPattern("EEEE", locale)), fontSize = 14.sp)
                     Text(
-                        if (date == state.today) "TODAY"
-                        else date.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale)),
-                        fontSize = 10.sp,
+                        date.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale)) +
+                            if (date == state.today) " · Today" else "",
+                        fontSize = 12.sp,
                         color =
                             if (date == state.today) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 5.dp),
                     )
                 }
-                Box(
-                    Modifier.width(minOf(75, count * 5).dp)
-                        .height(4.dp)
-                        .background(
-                            MaterialTheme.colorScheme.primary.copy(alpha = .65f),
-                            CircleShape,
-                        )
-                )
-                Column(Modifier.width(54.dp), horizontalAlignment = Alignment.End) {
+                Column(Modifier.padding(start = 8.dp), horizontalAlignment = Alignment.End) {
                     Text(count.toString(), fontSize = 22.sp)
                     Text(
                         if (count == 1) "tally" else "tallies",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Spacer(Modifier.width(8.dp))
+                Glyph("right", Modifier.size(16.dp))
             }
         }
     }
 }
 
 @Composable
-private fun HoursView(state: TallyState) {
+private fun HoursView(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
-    val entries = state.entries.filter { Moments.day(it.timestamp, state.zone) == state.date }
-    var selected by remember { mutableStateOf<Tally?>(null) }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(24) { hour ->
-            val moments = entries.filter {
-                Instant.ofEpochMilli(it.timestamp).atZone(state.zone).hour == hour
+    val entries =
+        state.entries
+            .filter { Moments.day(it.timestamp, state.zone) == state.date }
+            .sortedBy { it.timestamp }
+    val initialHour =
+        entries.firstOrNull()?.let { Instant.ofEpochMilli(it.timestamp).atZone(state.zone).hour }
+            ?: 0
+    val timelineState = rememberLazyListState()
+    LaunchedEffect(state.date, state.selected?.id, state.preview) {
+        timelineState.scrollToItem(maxOf(0, initialHour - 1))
+    }
+    var listMode by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (listMode) "Exact timestamps" else "Timeline · all 24 hours",
+                Modifier.weight(1f),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = { listMode = !listMode },
+                modifier =
+                    Modifier.heightIn(min = 48.dp)
+                        .background(MaterialTheme.colorScheme.surface, Shape),
+            ) {
+                Text(if (listMode) "Timeline" else "View list", fontSize = 12.sp)
             }
-            val height = 96
-            Row(Modifier.fillMaxWidth().height(height.dp)) {
-                Text(
-                    "%02d:00".format(hour),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(48.dp).padding(top = 4.dp),
-                )
-                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
-                    val trackWidth = maxOf(maxWidth, (moments.size * 48).dp)
-                    Box(Modifier.horizontalScroll(rememberScrollState())) {
-                        Box(Modifier.width(trackWidth).fillMaxHeight()) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                            moments.forEachIndexed { index, tally ->
-                                val minute =
-                                    Instant.ofEpochMilli(tally.timestamp).atZone(state.zone).minute
-                                val y = (minute / 60f * (height - 48)).dp
-                                Box(
-                                    Modifier.offset(x = (index * 48).dp, y = y)
-                                        .size(48.dp)
-                                        .clickable(role = Role.Button) { selected = tally }
-                                        .semantics {
-                                            contentDescription =
-                                                "Tally at ${stamp(tally.timestamp, state.zone, locale)}"
-                                        },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Dot(MaterialTheme.colorScheme.primary, 14.dp)
+        }
+        if (entries.isEmpty())
+            Text(
+                "No tallies on this day.",
+                Modifier.padding(vertical = 8.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        if (listMode)
+            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                items(entries, key = { it.id }) { tally ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clickable { model.openMoment(tally.id) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Dot(state.selected?.color?.let(::color) ?: color(Palette[0]))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            stamp(tally.timestamp, state.zone, locale),
+                            Modifier.weight(1f),
+                            fontSize = 15.sp,
+                        )
+                        Text(
+                            "Details",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Glyph("right")
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        else
+            LazyColumn(
+                state = timelineState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+            ) {
+                items(24) { hour ->
+                    val moments = entries.filter {
+                        Instant.ofEpochMilli(it.timestamp).atZone(state.zone).hour == hour
+                    }
+                    Row(Modifier.fillMaxWidth().height(72.dp)) {
+                        Text(
+                            "%02d:00".format(hour),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.widthIn(min = 52.dp).padding(top = 2.dp),
+                        )
+                        BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
+                            val trackWidth = maxOf(maxWidth, (moments.size * 48).dp)
+                            Box(Modifier.horizontalScroll(rememberScrollState())) {
+                                Box(Modifier.width(trackWidth).fillMaxHeight()) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                                    moments.forEachIndexed { index, tally ->
+                                        val time =
+                                            Instant.ofEpochMilli(tally.timestamp).atZone(state.zone)
+                                        val minute = time.minute + time.second / 60f
+                                        Box(
+                                            Modifier.offset(
+                                                    x = (index * 48).dp,
+                                                    y = (minute / 60f * 72 - 24).dp,
+                                                )
+                                                .size(48.dp)
+                                                .clickable(role = Role.Button) {
+                                                    model.openMoment(tally.id)
+                                                }
+                                                .semantics {
+                                                    contentDescription =
+                                                        "Tally at ${stamp(tally.timestamp, state.zone, locale)}"
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Box(
+                                                Modifier.size(12.dp)
+                                                    .border(
+                                                        1.dp,
+                                                        MaterialTheme.colorScheme.onSurface.copy(
+                                                            alpha = .6f
+                                                        ),
+                                                        CircleShape,
+                                                    )
+                                                    .background(
+                                                        state.selected?.color?.let(::color)
+                                                            ?: color(Palette[0]),
+                                                        CircleShape,
+                                                    )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-    }
-    selected?.let { tally ->
-        AlertDialog(
-            onDismissRequest = { selected = null },
-            title = { Text("Recorded moment") },
-            text = {
-                Text(
-                    "${state.selected?.name}\n${state.date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL).withLocale(locale))}\n${stamp(tally.timestamp, state.zone, locale)}"
-                )
-            },
-            confirmButton = { TextButton(onClick = { selected = null }) { Text("Done") } },
-        )
     }
 }
 
 @Composable
 private fun MonthView(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
-    val first = state.month.atDay(1)
-    val offset = first.dayOfWeek.value - 1
+    val offset = state.month.atDay(1).dayOfWeek.value - 1
     val max =
         (1..state.month.lengthOfMonth())
             .maxOf { state.counts[state.month.atDay(it)] ?: 0 }
             .coerceAtLeast(1)
-    BoxWithConstraints(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        val width = maxOf(maxWidth, 336.dp)
-        Column(Modifier.horizontalScroll(rememberScrollState())) {
-            Column(Modifier.width(width)) {
+    val accent = state.selected?.color?.let(::color) ?: color(Palette[0])
+    val fontScale = LocalDensity.current.fontScale
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val calendarGap = ((maxWidth - 336.dp) / 6).coerceIn(0.dp, 3.dp)
+        if (maxWidth < 336.dp || fontScale >= 1.5f) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                item {
+                    Text(
+                        "Calendar day list",
+                        Modifier.padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                    )
+                }
+                items(state.month.lengthOfMonth()) { index ->
+                    val day = state.month.atDay(index + 1)
+                    val count = state.counts[day] ?: 0
+                    ListItem(
+                        headlineContent = {
+                            Text(day.format(DateTimeFormatter.ofPattern("EEE, MMM d", locale)))
+                        },
+                        supportingContent = if (day == state.today) ({ Text("Today") }) else null,
+                        trailingContent = {
+                            Text("$count", color = MaterialTheme.colorScheme.primary)
+                        },
+                        modifier =
+                            Modifier.heightIn(min = 56.dp)
+                                .clickable { model.openDay(day) }
+                                .semantics { contentDescription = "$day, $count tallies" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        } else
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 Row {
                     (1..7).forEach { day ->
                         Text(
                             DayOfWeek.of(day)
-                                .getDisplayName(java.time.format.TextStyle.SHORT, locale)
-                                .uppercase(),
-                            fontSize = 10.sp,
+                                .getDisplayName(java.time.format.TextStyle.NARROW, locale),
+                            fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.weight(1f).padding(vertical = 12.dp),
@@ -844,86 +1168,94 @@ private fun MonthView(state: TallyState, model: TallyViewModel) {
                     }
                 }
                 repeat((offset + state.month.lengthOfMonth() + 6) / 7) { week ->
-                    Row(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(calendarGap),
+                    ) {
                         repeat(7) { column ->
                             val number = week * 7 + column - offset + 1
-                            Box(Modifier.weight(1f).padding(2.dp)) {
+                            Box(Modifier.weight(1f).padding(bottom = 3.dp)) {
                                 if (number in 1..state.month.lengthOfMonth()) {
-                                    val date = state.month.atDay(number)
-                                    val count = state.counts[date] ?: 0
+                                    val day = state.month.atDay(number)
+                                    val count = state.counts[day] ?: 0
                                     val fill =
                                         if (count == 0) MaterialTheme.colorScheme.surface
                                         else
                                             androidx.compose.ui.graphics.lerp(
                                                 MaterialTheme.colorScheme.surface,
-                                                MaterialTheme.colorScheme.primary,
+                                                accent,
                                                 .12f + count.toFloat() / max * .60f,
                                             )
-                                    val foreground = readableOn(fill)
                                     Column(
                                         Modifier.fillMaxWidth()
-                                            .heightIn(min = 64.dp)
+                                            .heightIn(min = 48.dp)
                                             .border(
                                                 1.dp,
-                                                if (date == state.today)
+                                                if (day == state.today)
                                                     MaterialTheme.colorScheme.primary
                                                 else MaterialTheme.colorScheme.outline,
                                                 RoundedCornerShape(8.dp),
                                             )
                                             .background(fill, RoundedCornerShape(8.dp))
-                                            .clickable { model.openDay(date) }
+                                            .clickable { model.openDay(day) }
                                             .semantics {
-                                                contentDescription = "$date, $count tallies"
+                                                contentDescription =
+                                                    "$day, $count tallies${if(day == state.today) ", Today" else ""}"
                                             }
-                                            .padding(6.dp)
+                                            .padding(5.dp)
                                     ) {
                                         Text(
                                             number.toString(),
                                             fontSize = 12.sp,
-                                            color = foreground,
+                                            color = readableOn(fill),
                                         )
                                         Text(
                                             if (count > 0) count.toString() else "",
-                                            color = foreground,
-                                            fontSize = 16.sp,
+                                            Modifier.fillMaxWidth(),
+                                            fontSize = 14.sp,
                                             textAlign = TextAlign.End,
-                                            modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                                            color = readableOn(fill),
                                         )
+                                        if (day == state.today)
+                                            Box(
+                                                Modifier.width(12.dp)
+                                                    .height(2.dp)
+                                                    .background(readableOn(fill))
+                                            )
                                     }
                                 }
                             }
                         }
                     }
                 }
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 18.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Less",
-                        fontSize = 10.sp,
+                        "Fewer",
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    listOf(.12f, .25f, .45f, .72f).forEach {
+                    listOf(.12f, .25f, .45f, .72f).forEach { alpha ->
                         Box(
                             Modifier.padding(start = 5.dp)
                                 .size(12.dp)
                                 .background(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = it),
+                                    androidx.compose.ui.graphics.lerp(
+                                        MaterialTheme.colorScheme.surface,
+                                        accent,
+                                        alpha,
+                                    ),
                                     RoundedCornerShape(3.dp),
                                 )
                         )
                     }
                     Text(
                         "More",
-                        fontSize = 10.sp,
+                        Modifier.padding(start = 12.dp),
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 5.dp),
                     )
                 }
             }
-        }
     }
 }
 
@@ -931,88 +1263,356 @@ private fun MonthView(state: TallyState, model: TallyViewModel) {
 private fun ProfileEditor(
     subject: Subject?,
     default: String,
+    busy: Boolean,
     dismiss: () -> Unit,
+    delete: (() -> Unit)?,
     save: (String, String) -> Unit,
 ) {
-    var name by rememberSaveable { mutableStateOf(subject?.name.orEmpty()) }
-    var hex by rememberSaveable { mutableStateOf(subject?.color ?: default) }
+    var name by rememberSaveable(subject?.id) { mutableStateOf(subject?.name.orEmpty()) }
+    var hex by rememberSaveable(subject?.id) { mutableStateOf(subject?.color ?: default) }
     var custom by rememberSaveable { mutableStateOf(false) }
     val validColor = Regex("#[0-9a-fA-F]{6}").matches(hex)
-    AlertDialog(
-        onDismissRequest = dismiss,
-        title = { Text(if (subject == null) "A new subject." else "Edit subject") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) dismiss() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier.fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Give your moments a name and a color.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp,
+                    if (subject == null) "New subject" else "Edit subject",
+                    Modifier.weight(1f),
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
                 )
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it.take(36) },
-                    label = { Text("Subject name") },
-                    singleLine = true,
-                    supportingText = { Text("${name.length}/36") },
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                )
-                Text(
-                    "Accent color",
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-                )
-                Row { Palette.take(3).forEach { c -> Swatch(c, hex) { hex = c } } }
-                Row { Palette.drop(3).forEach { c -> Swatch(c, hex) { hex = c } } }
-                TextButton(onClick = { custom = !custom }) { Text("Custom color") }
-                if (custom) {
-                    OutlinedTextField(
-                        value = hex,
-                        onValueChange = { hex = it.take(7).uppercase() },
-                        label = { Text("Hex color") },
-                        isError = !validColor,
-                        supportingText = { Text("Example: #A69AEE") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (validColor) {
-                        val c = color(hex)
-                        val values =
-                            listOf(
-                                "Red" to ((hex.toColorInt() shr 16) and 255),
-                                "Green" to ((hex.toColorInt() shr 8) and 255),
-                                "Blue" to (hex.toColorInt() and 255),
-                            )
-                        values.forEachIndexed { index, (label, value) ->
-                            Text(label, fontSize = 11.sp)
-                            Slider(
-                                value = value.toFloat(),
-                                onValueChange = { next ->
-                                    val rgb = values.map { it.second }.toMutableList()
-                                    rgb[index] = next.toInt()
-                                    hex = "#%02X%02X%02X".format(rgb[0], rgb[1], rgb[2])
-                                },
-                                valueRange = 0f..255f,
-                                modifier =
-                                    Modifier.semantics {
-                                        contentDescription = "$label color channel"
-                                    },
-                            )
-                        }
-                        Box(Modifier.fillMaxWidth().height(20.dp).background(c, Shape))
-                    }
+                TextButton(onClick = dismiss, enabled = !busy) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { save(name.trim(), hex) },
-                enabled = name.trim().isNotEmpty() && validColor,
-            ) {
-                Text(if (subject == null) "Create subject" else "Save changes")
+            Text(
+                "Subject name",
+                Modifier.padding(top = 16.dp, bottom = 8.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                name,
+                { name = it.take(36) },
+                placeholder = { Text("e.g. Water or Reading") },
+                singleLine = true,
+                shape = Shape,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+                supportingText = { if (name.isNotEmpty()) Text("${name.length}/36") },
+            )
+            Text(
+                "Accent color",
+                Modifier.padding(top = 16.dp, bottom = 8.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Palette.forEach { c -> Swatch(c, hex) { if (!busy) hex = c } }
             }
-        },
-        dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
-    )
+            Text(
+                "Custom color",
+                Modifier.padding(top = 16.dp, bottom = 8.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                onClick = { custom = true },
+                enabled = !busy,
+                color = MaterialTheme.colorScheme.background,
+                shape = Shape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Dot(color(hex), 20.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(hex, Modifier.weight(1f), fontSize = 15.sp)
+                    Text("RGB", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    Glyph("right")
+                }
+            }
+            Text(
+                "Used for your counter, stamps and heatmap.",
+                Modifier.padding(top = 18.dp, bottom = 24.dp),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = { save(name.trim(), hex) },
+                enabled = !busy && name.trim().isNotEmpty() && validColor,
+                shape = Shape,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text(
+                    if (subject == null) "Create subject" else "Save changes",
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            if (name.trim().isEmpty())
+                Text(
+                    "Enter a name to continue.",
+                    Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            if (delete != null)
+                TextButton(
+                    onClick = delete,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
+                ) {
+                    Text("Delete subject", color = MaterialTheme.colorScheme.error)
+                }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+    if (custom)
+        CustomColorEditor(hex, { custom = false }) {
+            hex = it
+            custom = false
+        }
+}
+
+@Composable
+private fun CustomColorEditor(initial: String, dismiss: () -> Unit, use: (String) -> Unit) {
+    var hex by rememberSaveable { mutableStateOf(initial) }
+    val valid = Regex("#[0-9a-fA-F]{6}").matches(hex)
+    ModalBottomSheet(
+        onDismissRequest = dismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier.fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Custom color",
+                    Modifier.weight(1f),
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                TextButton(onClick = dismiss) { Text("Cancel") }
+            }
+            Text(
+                "Hex color",
+                Modifier.padding(top = 12.dp, bottom = 8.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                hex,
+                { hex = it.take(7).uppercase() },
+                singleLine = true,
+                shape = Shape,
+                isError = !valid,
+                supportingText =
+                    if (!valid) ({ Text("Use six hex digits, such as #A69AEE.") }) else null,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (valid) {
+                val rgb =
+                    listOf(
+                        (hex.toColorInt() shr 16) and 255,
+                        (hex.toColorInt() shr 8) and 255,
+                        hex.toColorInt() and 255,
+                    )
+                listOf("Red", "Green", "Blue").forEachIndexed { index, label ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            label,
+                            Modifier.weight(1f),
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            rgb[index].toString(),
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.outline, Shape)
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            fontSize = 14.sp,
+                        )
+                    }
+                    Slider(
+                        value = rgb[index].toFloat(),
+                        onValueChange = { next ->
+                            val values = rgb.toMutableList()
+                            values[index] = next.toInt()
+                            hex = "#%02X%02X%02X".format(values[0], values[1], values[2])
+                        },
+                        valueRange = 0f..255f,
+                        modifier =
+                            Modifier.semantics { contentDescription = "$label color channel" },
+                    )
+                }
+                Box(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .background(color(hex), Shape)
+                        .padding(12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Color preview", color = readableOn(color(hex)))
+                }
+            }
+            Button(
+                onClick = { use(hex) },
+                enabled = valid,
+                shape = Shape,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 20.dp),
+            ) {
+                Text("Use this color", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun PreviewBanner(model: TallyViewModel) {
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 8.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
+            .background(MaterialTheme.colorScheme.surface, Shape)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Example data", fontSize = 14.sp)
+            Text(
+                "Your real records are separate",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        TextButton(onClick = model::togglePreview) { Text("Exit preview", fontSize = 12.sp) }
+    }
+}
+
+@Composable
+private fun EmptySubjects(create: () -> Unit, restore: () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Text(
+            "A fresh start.",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 24.dp),
+        )
+        Text(
+            "Create a subject to begin counting.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Column(
+            Modifier.fillMaxWidth().padding(top = 80.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Glyph("count", Modifier.size(40.dp))
+            Spacer(Modifier.height(24.dp))
+            Text("No subjects yet", fontSize = 22.sp)
+            Text(
+                "Your next moment starts here.",
+                Modifier.padding(top = 12.dp, bottom = 32.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = create,
+                shape = Shape,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) {
+                Text("Create subject", fontWeight = FontWeight.Bold)
+            }
+            TextButton(onClick = restore, modifier = Modifier.padding(top = 12.dp)) {
+                Text("Or restore a backup in Settings.", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MomentDetails(state: TallyState, tally: Tally, model: TallyViewModel) {
+    val locale = LocalLocale.current.platformLocale
+    val day = Moments.day(tally.timestamp, state.zone)
+    val fullDate =
+        day.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL).withLocale(locale))
+    val time = stamp(tally.timestamp, state.zone, locale)
+    var deleting by rememberSaveable(tally.id) { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) model.closeMoment() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
+            Text("Recorded moment", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(state.selected?.name.orEmpty(), Modifier.padding(top = 16.dp), fontSize = 16.sp)
+            Text(
+                fullDate,
+                Modifier.padding(top = 12.dp),
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(time, fontSize = 28.sp)
+            FilledTonalButton(
+                onClick = model::closeMoment,
+                enabled = !busy,
+                shape = Shape,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 16.dp),
+            ) {
+                Text("Done")
+            }
+            if (!state.preview)
+                TextButton(
+                    onClick = { deleting = true },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 12.dp),
+                ) {
+                    MinimalTrashIcon()
+                    Spacer(Modifier.width(10.dp))
+                    Text("Delete tally", color = MaterialTheme.colorScheme.error)
+                }
+        }
+    }
+    if (deleting)
+        DeleteTallyConfirmation(
+            state.selected?.name.orEmpty(),
+            "$fullDate, $time",
+            busy,
+            onCancel = { deleting = false },
+            onConfirm = {
+                busy = true
+                model.deleteTally(tally) { success ->
+                    busy = false
+                    if (success) {
+                        deleting = false
+                        model.closeMoment()
+                    }
+                }
+            },
+        )
 }
 
 @Composable
@@ -1039,17 +1639,25 @@ private fun Swatch(hex: String, selected: String, click: () -> Unit) {
 
 @Composable
 private fun SettingsScreen(model: TallyViewModel) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var pending by remember { mutableStateOf<Backup?>(null) }
-    var busy by remember { mutableStateOf(false) }
+    val state by model.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current.applicationContext
+    val pending by model.pendingBackup.collectAsState()
+    val confirming by model.confirmRestore.collectAsState()
+    val busy by model.backupBusy.collectAsState()
+    val error by model.backupError.collectAsState()
+    var exportBeforeRestore by rememberSaveable { mutableStateOf(false) }
     val exporter =
         rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument("application/json")
         ) { uri ->
-            if (uri != null)
-                scope.launch {
-                    busy = true
+            if (uri == null) {
+                model.notify("Export canceled")
+                if (exportBeforeRestore) model.confirmRestore.value = true
+                exportBeforeRestore = false
+            } else
+                model.runBackup {
+                    model.backupBusy.value = true
+                    model.backupError.value = null
                     try {
                         val json = model.exportBackup()
                         withContext(Dispatchers.IO) {
@@ -1058,19 +1666,25 @@ private fun SettingsScreen(model: TallyViewModel) {
                                 .use { it.write(json) }
                         }
                         model.notify("Backup saved")
-                    } catch (error: Exception) {
-                        if (error is CancellationException) throw error
-                        model.notify("Backup could not be saved. Please try another location.")
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        model.backupErrorIsExport.value = true
+                        model.backupError.value =
+                            "Backup could not be saved. Please try another location."
                     } finally {
-                        busy = false
+                        model.backupBusy.value = false
+                        if (exportBeforeRestore) model.confirmRestore.value = true
+                        exportBeforeRestore = false
                     }
                 }
         }
     val importer =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null)
-                scope.launch {
-                    busy = true
+            if (uri == null) model.notify("Restore canceled")
+            else
+                model.runBackup {
+                    model.backupBusy.value = true
+                    model.backupError.value = null
                     try {
                         val text =
                             withContext(Dispatchers.IO) {
@@ -1089,88 +1703,253 @@ private fun SettingsScreen(model: TallyViewModel) {
                                     out.toString("UTF-8")
                                 }
                             }
-                        pending = model.parseBackup(text)
-                    } catch (error: Exception) {
-                        if (error is CancellationException) throw error
-                        model.notify("Invalid or unreadable backup. Your data has not changed.")
+                        model.setPendingBackup(model.parseBackup(text))
+                        model.confirmRestore.value = true
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        model.backupErrorIsExport.value = false
+                        model.backupError.value =
+                            "Backup could not be opened. Your current data has not changed."
                     } finally {
-                        busy = false
+                        model.backupBusy.value = false
                     }
                 }
         }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
-        Text("Settings & backup", fontSize = 28.sp, modifier = Modifier.padding(bottom = 10.dp))
-        Text(
-            "Your moments are stored on this device. Save a backup somewhere safe to move them to another device or restore them later.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 14.sp,
-        )
-        Spacer(Modifier.height(24.dp))
-        OutlinedButton(
-            onClick = { exporter.launch("tally-backup-${LocalDate.now()}.json") },
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
+    val export = { exporter.launch("tally-backup-${LocalDate.now()}.json") }
+    val import = {
+        importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Export backup")
+            IconButton(onClick = model::back, enabled = !busy) {
+                Glyph("left", description = "Back")
+            }
+            Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold)
         }
-        OutlinedButton(
-            onClick = {
-                importer.launch(
-                    arrayOf("application/json", "text/plain", "application/octet-stream")
-                )
-            },
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
+        Text("Appearance", Modifier.padding(bottom = 12.dp), fontSize = 14.sp)
+        Segments(
+            listOf("dark" to "Dark", "light" to "Light"),
+            if (state.light) "light" else "dark",
         ) {
-            Text("Restore backup")
+            model.setTheme(it == "light")
         }
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
-        HorizontalDivider(Modifier.padding(vertical = 24.dp))
-        Text("Tally 1.0.1", fontWeight = FontWeight.Medium)
+        Text("Backup", Modifier.padding(top = 28.dp, bottom = 12.dp), fontSize = 14.sp)
+        Column(
+            Modifier.fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
+                .background(MaterialTheme.colorScheme.surface, Shape)
+        ) {
+            SettingsAction(
+                "Export backup",
+                "Save all subjects and tallies",
+                "export",
+                !busy,
+                export,
+            )
+            HorizontalDivider(
+                Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outline,
+            )
+            SettingsAction("Restore backup", "Choose a backup file", "import", !busy, import)
+        }
         Text(
-            "Make a moment count.\nSaved on this device · Works offline",
+            "Restore replaces your data after confirmation.",
+            Modifier.padding(top = 12.dp),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp),
+        )
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
+        Text("Example data", Modifier.padding(top = 28.dp, bottom = 12.dp), fontSize = 14.sp)
+        Column(
+            Modifier.fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
+                .background(MaterialTheme.colorScheme.surface, Shape)
+        ) {
+            SettingsAction(
+                if (state.preview) "Exit preview" else "Try example data",
+                "Your records stay separate",
+                "right",
+                !busy && state.selected != null,
+            ) {
+                model.togglePreview()
+                model.screen("counter")
+            }
+        }
+        error?.let { message ->
+            Column(
+                Modifier.fillMaxWidth()
+                    .padding(top = 24.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.error, Shape)
+                    .padding(16.dp)
+            ) {
+                Text(message, fontSize = 14.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(
+                        onClick = {
+                            model.backupError.value = null
+                            if (model.backupErrorIsExport.value) export() else import()
+                        },
+                        enabled = !busy,
+                    ) {
+                        Text(
+                            if (model.backupErrorIsExport.value) "Try another location"
+                            else "Choose another file",
+                            fontSize = 12.sp,
+                        )
+                    }
+                    TextButton(onClick = { model.backupError.value = null }) {
+                        Text("Dismiss", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+        Text(
+            "Saved on this device · Works offline",
+            Modifier.padding(top = 28.dp),
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Export a backup before uninstalling.",
+            Modifier.padding(top = 12.dp),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Tally ${BuildConfig.VERSION_NAME}",
+            Modifier.padding(top = 16.dp),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    pending?.let { backup ->
-        AlertDialog(
-            onDismissRequest = { pending = null },
-            title = { Text("Replace current data?") },
-            text = {
-                Text(
-                    "This backup contains ${backup.subjects.size} subjects and ${backup.tallies.size} tallies. Restoring it replaces all current subjects and tallies. Export your current data first if you want to keep it."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pending = null
-                        busy = true
-                        scope.launch {
-                            try {
-                                model.restore(backup)
-                            } catch (error: Exception) {
-                                if (error is CancellationException) throw error
-                                model.notify("Restore failed. Please try again.")
-                            } finally {
-                                busy = false
-                            }
+    if (confirming)
+        pending?.let { backup ->
+            AlertDialog(
+                onDismissRequest = {
+                    if (!busy) {
+                        model.confirmRestore.value = false
+                        model.setPendingBackup(null)
+                    }
+                },
+                title = { Text("Replace current data?") },
+                text = {
+                    Column {
+                        Text(
+                            "Backup: ${backup.subjects.size} subjects · ${backup.tallies.size} tallies",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Your current subjects and tallies will be replaced. This cannot be undone.",
+                            Modifier.padding(top = 16.dp),
+                            fontSize = 14.sp,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                model.confirmRestore.value = false
+                                exportBeforeRestore = true
+                                export()
+                            },
+                            enabled = !busy,
+                            shape = Shape,
+                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        ) {
+                            Text("Export current data first")
                         }
                     }
-                ) {
-                    Text("Replace and restore")
-                }
-            },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
-        )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            model.backupBusy.value = true
+                            model.runBackup {
+                                try {
+                                    model.restore(backup)
+                                    model.setPendingBackup(null)
+                                    model.confirmRestore.value = false
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    model.backupError.value =
+                                        "Restore failed. Your current data has not changed."
+                                    model.confirmRestore.value = false
+                                } finally {
+                                    model.backupBusy.value = false
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError,
+                            ),
+                        shape = Shape,
+                    ) {
+                        Text("Replace with backup")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            model.confirmRestore.value = false
+                            model.setPendingBackup(null)
+                        },
+                        enabled = !busy,
+                    ) {
+                        Text("Cancel")
+                    }
+                },
+            )
+        }
+}
+
+@Composable
+private fun SettingsAction(
+    title: String,
+    subtitle: String,
+    glyph: String,
+    enabled: Boolean,
+    click: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable(enabled = enabled, onClick = click)
+            .heightIn(min = 72.dp)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 15.sp,
+                color =
+                    if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                subtitle,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) {
+            Glyph(glyph)
+        }
     }
 }
 
 @Composable
 private fun Dot(color: Color, size: Dp = 9.dp) {
-    Box(Modifier.size(size).background(color, CircleShape))
+    Box(
+        Modifier.size(size)
+            .background(color, CircleShape)
+            .border(.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+    )
 }
 
 @Composable
@@ -1201,6 +1980,35 @@ private fun Glyph(type: String, modifier: Modifier = Modifier, description: Stri
             )
         }
         when (type) {
+            "settings" -> {
+                line(4f, 6f, 20f, 6f)
+                line(4f, 12f, 20f, 12f)
+                line(4f, 18f, 20f, 18f)
+                line(8f, 4f, 8f, 8f)
+                line(16f, 10f, 16f, 14f)
+                line(10f, 16f, 10f, 20f)
+            }
+            "check" -> {
+                line(4f, 12f, 9f, 17f)
+                line(9f, 17f, 20f, 6f)
+            }
+            "export" -> {
+                line(12f, 16f, 12f, 3f)
+                line(8f, 7f, 12f, 3f)
+                line(16f, 7f, 12f, 3f)
+                line(5f, 13f, 5f, 21f)
+                line(5f, 21f, 19f, 21f)
+                line(19f, 21f, 19f, 13f)
+            }
+            "import" -> {
+                line(12f, 3f, 12f, 16f)
+                line(8f, 12f, 12f, 16f)
+                line(16f, 12f, 12f, 16f)
+                line(5f, 13f, 5f, 21f)
+                line(5f, 21f, 19f, 21f)
+                line(19f, 21f, 19f, 13f)
+            }
+
             "brand" -> {
                 listOf(5f, 10f, 15f, 20f).forEach { line(it, 4f, it, 20f) }
                 line(2f, 17f, 22f, 7f)
@@ -1215,6 +2023,10 @@ private fun Glyph(type: String, modifier: Modifier = Modifier, description: Stri
                 line(5f, 12f, 19f, 12f)
             }
             "history" -> listOf(5f, 12f, 19f).forEach { line(4f, it, 20f, it) }
+            "down" -> {
+                line(6f, 9f, 12f, 15f)
+                line(12f, 15f, 18f, 9f)
+            }
             "left" -> {
                 line(15f, 6f, 9f, 12f)
                 line(9f, 12f, 15f, 18f)

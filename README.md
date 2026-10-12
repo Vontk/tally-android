@@ -1,16 +1,18 @@
 # Tally
 
-A small, native Android app for making a moment count. Inspired by [the original Tally design](https://tally.aptmoss8.chatgpt.site).
+A small, native Android app for making a moment count. Version 1.1.0 implements the revised phone design supplied in `tally-design-updated.zip`. The original handoff is preserved in [docs/design](docs/design/tally-design-updated.zip).
 
 ## Install
 
-Download `tally-1.0.1.apk` from this repository's **Releases** page. Android 8.0 or newer is required. Allow installation from the app used to open the APK when Android prompts you.
+Download `tally-1.1.0.apk` from this repository's **Releases** page. Android 8.0 or newer is required. Allow installation from the app used to open the APK when Android prompts you.
 
 ## Features
 
 - Multiple subjects, editable names, six accent presets, and custom RGB/hex colors.
 - One tap per moment, undo, today/weekly/all-time totals, streaks, and recent moments.
-- Daily history, an hourly timestamp timeline, and monthly calendar heatmaps.
+- Daily history, exact-minute timeline, timestamp list, date picker, and monthly heatmaps with a day-list fallback on small screens or large text.
+- Confirmed deletion of individual tallies or entire subjects; deleting the final subject leaves an intentional empty state.
+- Compact labelled Settings/Edit controls, subject sheets, persistent preview banner, and explicit Dark/Light appearance.
 - Dark and light appearance, phone/tablet layouts, haptics, and accessible controls.
 - Example data that remains separate from your saved moments.
 - Offline storage and JSON backup/restore through Android's document picker.
@@ -43,13 +45,13 @@ Use the original signing key for every update. The initial key is stored locally
 ./scripts/sign-release.sh
 ```
 
-The directory must contain `release.jks` (alias `tally`) and a `password` file containing its password. The script produces `artifacts/tally-1.0.1.apk` and `artifacts/SHA256SUMS`. Never commit or upload the key/password to a release or artifact.
+The directory must contain `release.jks` (alias `tally`) and a `password` file containing its password. The script produces `artifacts/tally-1.1.0.apk` and `artifacts/SHA256SUMS`. Never commit or upload the key/password to a release or artifact.
 
 ## Data and backup
 
 Every tally is stored as a UTC timestamp. History groups moments in the device's current timezone, so changing timezone can change which day a moment appears under. Last 7 days means today plus six earlier calendar days. A streak can continue from yesterday until a tally is recorded today. Undo removes the latest inserted record for the selected subject, even after a clock change.
 
-**Settings and backup → Export backup** creates a versioned `tally-android` JSON file containing all subjects, tallies, and preferences. **Restore backup** validates the file, then asks before replacing existing records. Invalid files leave your data unchanged. Import is limited to 20 MB. Website data is not imported.
+**Settings → Export backup** creates a versioned `tally-android` JSON file containing all subjects, tallies, and preferences. **Restore backup** validates the file, then asks before replacing existing records. Invalid files leave your data unchanged. Restore offers an export-first action. Empty backups are supported when there are no subjects or tallies. Import is limited to 20 MB. Website data is not imported.
 
 ## Verification
 

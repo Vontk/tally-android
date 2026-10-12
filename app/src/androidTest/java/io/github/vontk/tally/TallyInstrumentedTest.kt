@@ -94,8 +94,9 @@ class TallyInstrumentedTest {
         rule.waitUntil(10000) {
             rule.onAllNodesWithText("History").fetchSemanticsNodes().isNotEmpty()
         }
+        rule.onNodeWithText("Settings").performClick()
+        rule.onNodeWithText("Try example data").performClick()
         rule.onNodeWithText("History").performClick()
-        rule.onNodeWithText("Preview data").performClick()
         rule.onNodeWithText("Hours").performClick()
         rule.onNodeWithText("Month").performClick()
         rule.onNodeWithText("Days").performClick()

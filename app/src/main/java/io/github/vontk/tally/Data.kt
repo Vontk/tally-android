@@ -69,7 +69,7 @@ interface TallyDao {
 
     @Insert suspend fun insertSubject(subject: Subject)
 
-    @Insert suspend fun insertTallies(tallies: List<Tally>)
+    @Insert suspend fun insertTallies(tallies: List<Tally>): List<Long>
 
     @Query("UPDATE subjects SET name = :name, color = :color WHERE id = :id")
     suspend fun editSubject(id: String, name: String, color: String)
@@ -78,6 +78,11 @@ interface TallyDao {
         "DELETE FROM tallies WHERE id = (SELECT MAX(id) FROM tallies WHERE subjectId = :subjectId)"
     )
     suspend fun undo(subjectId: String)
+
+    @Query("DELETE FROM subjects WHERE id = :id") suspend fun deleteSubject(id: String)
+
+    @Query("DELETE FROM tallies WHERE id = :id AND subjectId = :subjectId")
+    suspend fun deleteTally(id: Long, subjectId: String)
 
     @Query("DELETE FROM subjects") suspend fun clearSubjects()
 }
@@ -91,6 +96,7 @@ class TallyRepository(context: Context) {
     private val store = context.settingsStore
     private val selectedKey = stringPreferencesKey("selected")
     private val lightKey = booleanPreferencesKey("light")
+    private val initializedKey = booleanPreferencesKey("initialized")
     private val database =
         Room.databaseBuilder(context, TallyDatabase::class.java, "tally.db").build()
     private val dao = database.dao()
@@ -102,11 +108,39 @@ class TallyRepository(context: Context) {
     fun tallies(subjectId: String) = dao.observeTallies(subjectId)
 
     suspend fun initialize() = lock.withLock {
-        if (dao.subjects().isEmpty()) {
-            val subject = Subject(UUID.randomUUID().toString(), "Little moments", Palette[0], 0)
-            dao.insertSubject(subject)
-            select(subject.id)
+        if (store.data.first()[initializedKey] != true) {
+            if (dao.subjects().isEmpty()) {
+                val subject = Subject(UUID.randomUUID().toString(), "Little moments", Palette[0], 0)
+                dao.insertSubject(subject)
+                select(subject.id)
+            }
+            store.edit { it[initializedKey] = true }
         }
+    }
+
+    suspend fun setTheme(light: Boolean) {
+        store.edit { it[lightKey] = light }
+    }
+
+    suspend fun deleteSubject(id: String) = lock.withLock {
+        // Mark initialized before deletion so an intentionally empty database stays empty.
+        store.edit { it[initializedKey] = true }
+        val old = dao.subjects()
+        val deletedPosition = old.find { it.id == id }?.position ?: -1
+        val remaining = database.withTransaction {
+            dao.deleteSubject(id)
+            dao.subjects()
+        }
+        if (preferences.first().selected == id)
+            select(
+                (remaining.firstOrNull { it.position > deletedPosition } ?: remaining.firstOrNull())
+                    ?.id
+                    .orEmpty()
+            )
+    }
+
+    suspend fun deleteTally(id: Long, subjectId: String) = lock.withLock {
+        dao.deleteTally(id, subjectId)
     }
 
     suspend fun select(id: String) {
@@ -124,7 +158,7 @@ class TallyRepository(context: Context) {
                 UUID.randomUUID().toString(),
                 name.trim(),
                 color.uppercase(),
-                dao.subjects().size,
+                (dao.subjects().maxOfOrNull { it.position } ?: -1) + 1,
             )
         dao.insertSubject(subject)
         select(subject.id)
@@ -137,7 +171,7 @@ class TallyRepository(context: Context) {
     }
 
     suspend fun add(id: String, timestamp: Long) = lock.withLock {
-        dao.insertTallies(listOf(Tally(subjectId = id, timestamp = timestamp)))
+        dao.insertTallies(listOf(Tally(subjectId = id, timestamp = timestamp))).first()
     }
 
     suspend fun undo(id: String) = lock.withLock { dao.undo(id) }
@@ -156,6 +190,7 @@ class TallyRepository(context: Context) {
                 store.edit {
                     it[selectedKey] = backup.preferences.selected
                     it[lightKey] = backup.preferences.light
+                    it[initializedKey] = true
                 }
             }
         } catch (error: Exception) {
@@ -241,7 +276,7 @@ object BackupCodec {
                     )
                 }
             }
-        require(subjects.isNotEmpty() && subjects.size <= 10000) { "Backup must contain subjects." }
+        require(subjects.size <= 10000) { "Backup contains too many subjects." }
         subjects.forEach {
             validateSubject(it.name, it.color)
             require(it.id.isNotBlank() && it.id.length <= 128 && it.position >= 0)
@@ -275,7 +310,9 @@ object BackupCodec {
         }
         val pref = json.getJSONObject("preferences")
         val preferences = Preferences(pref.getString("selected"), pref.getBoolean("light"))
-        require(preferences.selected in ids) { "Selected subject is missing." }
+        require(preferences.selected in ids || (ids.isEmpty() && preferences.selected.isEmpty())) {
+            "Selected subject is missing."
+        }
         return Backup(subjects.sortedBy { it.position }, tallies.sortedBy { it.id }, preferences)
     }
 }

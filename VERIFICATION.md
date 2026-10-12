@@ -1,3 +1,13 @@
+# Release verification — 1.1.0
+
+Design update dated 2026-10-12, based on the supplied revised handoff. Compiled with Android 17 SDK 37.2, target API 37, minimum API 26. Uses the original signing key and database schema.
+
+This update's release compilation, signing, archive alignment and published checksum are recorded in its GitHub release. Automated unit/device test suites were not rerun for this design update. The existing history/preview test's navigation selectors were adjusted for the new Settings entry point; no new tests were added.
+
+The earlier Android 17 emulator renderer limitation remains unresolved. No physical-device validation is claimed.
+
+## Historical verification for 1.0.1
+
 # Release verification — 1.0.1
 
 Verified locally on 2026-10-10. The final release is compiled against Android 17 SDK 37.2, targets API 37, and supports API 26 onward.
