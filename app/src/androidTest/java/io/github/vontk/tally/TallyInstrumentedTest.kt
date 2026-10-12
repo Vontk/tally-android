@@ -45,6 +45,12 @@ class TallyInstrumentedTest {
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
+        rule.waitUntil(10000) {
+            rule
+                .onAllNodes(hasText("Tally added", substring = true))
+                .fetchSemanticsNodes()
+                .isEmpty()
+        }
         rule.onNodeWithText("Undo last tally").performScrollTo().performClick()
         awaitTallyCount(19)
         rule.activityRule.scenario.recreate()
@@ -110,7 +116,7 @@ class TallyInstrumentedTest {
             rule.onAllNodesWithText("History").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithText("Settings").performClick()
-        rule.onNodeWithText("Try example data").performClick()
+        rule.onNodeWithText("Try example data").performScrollTo().performClick()
         rule.onNodeWithText("History").performClick()
         rule.onNodeWithText("Hours").performClick()
         rule.onNodeWithText("Month").performClick()
