@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -45,6 +47,8 @@ import java.time.format.FormatStyle
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 
 private fun color(hex: String) = Color(hex.toColorInt())
 
@@ -304,7 +308,7 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                                 } else false
                                             }
                                     ) {
-                                        if (state.screen == "counter") CounterScreen(state, model)
+                                        if (state.screen == "counter") CounterPager(state, model)
                                         else HistoryScreen(state, model)
                                     }
                                 }
@@ -560,6 +564,74 @@ private fun Heading(state: TallyState) {
     }
 }
 
+/** Each subject is a real swipeable page; vertical scrolling and circle taps stay independent. */
+@Composable
+private fun CounterPager(state: TallyState, model: TallyViewModel) {
+    val selectedIndex =
+        state.subjects.indexOfFirst { it.subject.id == state.selected?.id }.coerceAtLeast(0)
+    val pager = rememberPagerState(initialPage = selectedIndex, pageCount = { state.subjects.size })
+    val latest by rememberUpdatedState(state)
+    var syncingSelection by remember { mutableStateOf(false) }
+    var pendingSwipeId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.selected?.id, state.subjects.map { it.subject.id }) {
+        // Delayed preference writes from an earlier swipe must not pull a newer swipe back.
+        if (pendingSwipeId != null) {
+            if (
+                state.subjects.none { it.subject.id == pendingSwipeId } ||
+                    state.selected?.id == pendingSwipeId
+            )
+                pendingSwipeId = null
+            else return@LaunchedEffect
+        }
+        if (pager.isScrollInProgress) return@LaunchedEffect
+        if (pager.currentPage != selectedIndex) {
+            syncingSelection = true
+            try {
+                pager.scrollToPage(selectedIndex)
+            } finally {
+                syncingSelection = false
+            }
+        }
+    }
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.settledPage to pager.isScrollInProgress }
+            .filter { !it.second }
+            .distinctUntilChanged()
+            .collect { (index, _) ->
+                val subject = latest.subjects.getOrNull(index)?.subject
+                if (
+                    !syncingSelection &&
+                        subject != null &&
+                        (subject.id != latest.selected?.id ||
+                            (pendingSwipeId != null && pendingSwipeId != subject.id))
+                ) {
+                    pendingSwipeId = subject.id
+                    model.selectFromSwipe(subject.id) { success ->
+                        if (!success) pendingSwipeId = null
+                    }
+                }
+            }
+    }
+    HorizontalPager(
+        state = pager,
+        key = { state.subjects.getOrNull(it)?.subject?.id ?: "removed-$it" },
+        beyondViewportPageCount = 1,
+        userScrollEnabled = state.subjects.size > 1,
+        modifier = Modifier.fillMaxSize(),
+    ) { index ->
+        val subject = state.subjects.getOrNull(index)?.subject ?: return@HorizontalPager
+        val recordsFlow = remember(subject.id, model) { model.entriesFor(subject.id) }
+        val records by recordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+        val pageEntries =
+            when {
+                state.preview -> Moments.preview(state.today, state.zone, subject.id)
+                subject.id == state.selected?.id -> state.entries
+                else -> records
+            }
+        CounterScreen(state.copy(selected = subject, entries = pageEntries), model)
+    }
+}
+
 @Composable
 private fun CounterScreen(state: TallyState, model: TallyViewModel) {
     val locale = LocalLocale.current.platformLocale
@@ -600,7 +672,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                             .background(accent, CircleShape)
                             .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
                             .clickable(enabled = !state.preview, role = Role.Button) {
-                                model.tally()
+                                model.tally(state.selected?.id)
                                 if (!state.preview) {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     pressed = true
@@ -653,7 +725,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                     )
                 }
                 TextButton(
-                    onClick = model::undo,
+                    onClick = { model.undo(state.selected?.id) },
                     modifier =
                         Modifier.padding(top = 8.dp)
                             .heightIn(min = 48.dp)

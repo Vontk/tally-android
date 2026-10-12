@@ -230,6 +230,21 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
         saved["moment"] = 0L
     }
 
+    fun entriesFor(id: String) = repository.tallies(id)
+
+    fun selectFromSwipe(id: String, done: (Boolean) -> Unit) {
+        closeMoment()
+        enqueue {
+            try {
+                repository.select(id)
+                done(true)
+            } catch (error: Exception) {
+                done(false)
+                throw error
+            }
+        }
+    }
+
     fun select(id: String) {
         closeMoment()
         saved["preview"] = false
@@ -249,12 +264,12 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
         )
     }
 
-    fun tally() {
+    fun tally(subjectId: String? = state.value.selected?.id) {
         if (preview.value) {
             notify("Exit preview to record your own tallies.")
             return
         }
-        val id = state.value.selected?.id ?: return
+        val id = subjectId ?: return
         val timestamp = System.currentTimeMillis()
         enqueue {
             val added = repository.add(id, timestamp)
@@ -267,9 +282,9 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
         }
     }
 
-    fun undo() {
+    fun undo(subjectId: String? = state.value.selected?.id) {
         if (preview.value) return
-        val id = state.value.selected?.id ?: return
+        val id = subjectId ?: return
         enqueue {
             repository.undo(id)
             notify("Last tally removed")

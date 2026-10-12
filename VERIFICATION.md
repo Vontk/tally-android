@@ -1,3 +1,9 @@
+# Release verification — 1.1.1
+
+Native subject paging update. Final release compilation, APK signatures, source revision, 16 KB archive alignment and uploaded checksum are checked for publication. Automated test suites were not rerun for this update.
+
+## Historical verification for 1.1.0
+
 # Release verification — 1.1.0
 
 Design update dated 2026-10-12, based on the supplied revised handoff. Compiled with Android 17 SDK 37.2, target API 37, minimum API 26. Uses the original signing key and database schema.
