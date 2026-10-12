@@ -38,9 +38,15 @@ class TallyInstrumentedTest {
         repeat(20) {
             rule.onNodeWithContentDescription("Add a tally for Little moments").performClick()
         }
-        withTimeout(10000) { repository.tallies("test-subject").first { it.size == 20 } }
+        awaitTallyCount(20)
+        rule.waitUntil(10000) {
+            rule
+                .onAllNodes(hasText("Undo last tally") and isEnabled())
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
         rule.onNodeWithText("Undo last tally").performClick()
-        withTimeout(10000) { repository.tallies("test-subject").first { it.size == 19 } }
+        awaitTallyCount(19)
         rule.activityRule.scenario.recreate()
         rule.waitUntil(10000) {
             rule
@@ -49,6 +55,15 @@ class TallyInstrumentedTest {
                 .isNotEmpty()
         }
         assertEquals(19, repository.backup().tallies.size)
+    }
+
+    private suspend fun awaitTallyCount(expected: Int) {
+        try {
+            withTimeout(10000) { repository.tallies("test-subject").first { it.size == expected } }
+        } catch (timeout: TimeoutCancellationException) {
+            val actual = repository.tallies("test-subject").first().size
+            throw AssertionError("Expected $expected saved tallies, found $actual", timeout)
+        }
     }
 
     @Test
