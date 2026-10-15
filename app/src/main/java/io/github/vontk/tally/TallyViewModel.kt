@@ -75,7 +75,7 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
     }
 
     private val refresh = MutableStateFlow(0L)
-    private val preview = saved.getStateFlow("preview", false)
+    private val preview = MutableStateFlow(false)
     val todayRequests = MutableStateFlow(0)
     private val message = MutableStateFlow<String?>(null)
     private val screen = saved.getStateFlow("screen", "counter")
@@ -251,6 +251,10 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
         enqueue { repository.select(id) }
     }
 
+    fun moveSubject(id: String, direction: Int) {
+        enqueue { repository.move(id, direction) }
+    }
+
     fun toggleTheme() {
         enqueue { repository.toggleTheme() }
     }
@@ -291,16 +295,16 @@ class TallyViewModel(private val repository: TallyRepository, private val saved:
         }
     }
 
-    fun saveSubject(id: String?, name: String, color: String, done: (Boolean) -> Unit = {}) {
+    fun saveSubject(id: String?, name: String, color: String, negative: Boolean = false, done: (Boolean) -> Unit = {}) {
         if (editBusy.value) return
         editBusy.value = true
         enqueue {
             try {
                 if (id == null) {
-                    repository.create(name, color)
+                    repository.create(name, color, negative)
                     saved["preview"] = false
                     screen("counter")
-                } else repository.edit(id, name, color)
+                } else repository.edit(id, name, color, negative)
                 notify(if (id == null) "Your new subject is ready" else "Subject updated")
                 saved["editorVisible"] = false
                 done(true)

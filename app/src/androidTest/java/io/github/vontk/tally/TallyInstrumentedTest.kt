@@ -86,7 +86,7 @@ class TallyInstrumentedTest {
             BackupCodec.decode(BackupCodec.encode(source).replace("1791628800000", "-1"))
         }
         assertThrows(Exception::class.java) {
-            BackupCodec.decode(BackupCodec.encode(source).replace("#A69AEE", "invalid"))
+            BackupCodec.decode(BackupCodec.encode(source).replace(Palette[0], "invalid"))
         }
         assertEquals(source, repository.backup())
         repository.undo("test-subject")
@@ -111,17 +111,70 @@ class TallyInstrumentedTest {
     }
 
     @Test
-    fun historyTabsAndPreviewIsolation(): Unit = runBlocking {
+    fun versionOneDatabaseMigratesWithoutLosingTallies(): Unit = runBlocking {
+        val context = rule.activity.applicationContext
+        val name = "migration-${java.util.UUID.randomUUID()}.db"
+        val helper = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory().create(
+            androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(name)
+                .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
+                    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE subjects (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL, position INTEGER NOT NULL)")
+                        db.execSQL("CREATE TABLE tallies (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, subjectId TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY(subjectId) REFERENCES subjects(id) ON DELETE CASCADE)")
+                        db.execSQL("CREATE INDEX index_tallies_subjectId_timestamp ON tallies(subjectId, timestamp)")
+                        db.execSQL("INSERT INTO subjects VALUES ('original', 'Little moments', '#A69AEE', 0)")
+                        db.execSQL("INSERT INTO subjects VALUES ('custom', 'Custom', '#A69AEE', 1)")
+                        db.execSQL("INSERT INTO tallies VALUES (1, 'original', 1791628800000)")
+                    }
+                    override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                }).build()
+        )
+        helper.writableDatabase
+        helper.close()
+        val database = androidx.room.Room.databaseBuilder(context, TallyDatabase::class.java, name)
+            .addMigrations(TALLY_MIGRATION_1_2).build()
+        try {
+            val subjects = database.dao().subjects()
+            assertEquals(Palette[0], subjects.first().color)
+            assertEquals(1791628800000L, subjects.first().createdAt)
+            assertFalse(subjects.first().negative)
+            assertEquals("#A69AEE", subjects.last().color)
+            assertEquals(1, database.dao().tallies().size)
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
+    fun negativeTypeAndOrderSurviveBackup(): Unit = runBlocking {
+        val negative = repository.create("Avoid distractions", Palette[2], negative = true)
+        repository.edit(negative, "Distractions", Palette[3], negative = true)
+        repository.move(negative, -1)
+        val backup = repository.backup()
+        assertEquals(negative, backup.subjects.first().id)
+        assertTrue(backup.subjects.first().negative)
+        assertTrue(backup.subjects.first().createdAt > 0)
+        val decoded = BackupCodec.decode(BackupCodec.encode(backup))
+        repository.restore(decoded)
+        assertEquals(backup, repository.backup())
+        repository.move(negative, 1)
+        assertEquals(negative, repository.backup().subjects.last().id)
+    }
+
+    @Test
+    fun historyTabsWithoutMockData(): Unit = runBlocking {
         rule.waitUntil(10000) {
             rule.onAllNodesWithText("History").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithText("Settings").performClick()
-        rule.onNodeWithText("Try example data").performScrollTo().performClick()
+        rule.onNodeWithText("Try example data").assertDoesNotExist()
+        rule.onNodeWithText("Counter").performClick()
         rule.onNodeWithText("History").performClick()
         rule.onNodeWithText("Hours").performClick()
         rule.onNodeWithText("Month").performClick()
         rule.onNodeWithText("Days").performClick()
-        rule.onNodeWithText("Exit preview").assertExists()
+        rule.onNodeWithText("Exit preview").assertDoesNotExist()
         assertTrue(repository.backup().tallies.isEmpty())
     }
 }

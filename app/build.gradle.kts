@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("androidx.room")
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         applicationId = "io.github.vontk.tally"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.1.2"
+        versionCode = 6
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
@@ -42,7 +43,7 @@ android {
     }
 }
 
-ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+room { schemaDirectory("$projectDir/schemas") }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))

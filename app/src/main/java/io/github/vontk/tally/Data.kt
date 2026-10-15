@@ -14,7 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 val Context.settingsStore by preferencesDataStore("settings")
-val Palette = listOf("#A69AEE", "#7FB5A4", "#E3A77E", "#D58AAB", "#82AEDD", "#D2BD78")
+val Palette = listOf("#F5F5F0", "#B8BDC7", "#FFFFFF", "#EF6A6A", "#F39B59", "#F0CC65", "#A8CA73", "#65C6A1", "#63C8CC", "#67A2EF", "#8588ED", "#BD87DE", "#EE91C0", "#C49C82", "#A69AEE", "#7FB5A4", "#E3A77E", "#D58AAB", "#82AEDD", "#D2BD78")
 
 @Entity(tableName = "subjects")
 data class Subject(
@@ -22,6 +22,8 @@ data class Subject(
     val name: String,
     val color: String,
     val position: Int,
+    @ColumnInfo(defaultValue = "0") val negative: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val createdAt: Long = 0,
 )
 
 @Entity(
@@ -71,8 +73,8 @@ interface TallyDao {
 
     @Insert suspend fun insertTallies(tallies: List<Tally>): List<Long>
 
-    @Query("UPDATE subjects SET name = :name, color = :color WHERE id = :id")
-    suspend fun editSubject(id: String, name: String, color: String)
+    @Query("UPDATE subjects SET name = :name, color = :color, negative = :negative WHERE id = :id")
+    suspend fun editSubject(id: String, name: String, color: String, negative: Boolean)
 
     @Query(
         "DELETE FROM tallies WHERE id = (SELECT MAX(id) FROM tallies WHERE subjectId = :subjectId)"
@@ -84,12 +86,24 @@ interface TallyDao {
     @Query("DELETE FROM tallies WHERE id = :id AND subjectId = :subjectId")
     suspend fun deleteTally(id: Long, subjectId: String)
 
+    @Query("UPDATE subjects SET position = :position WHERE id = :id")
+    suspend fun setPosition(id: String, position: Int)
+
     @Query("DELETE FROM subjects") suspend fun clearSubjects()
 }
 
-@Database(entities = [Subject::class, Tally::class], version = 1, exportSchema = true)
+@Database(entities = [Subject::class, Tally::class], version = 2, exportSchema = true)
 abstract class TallyDatabase : RoomDatabase() {
     abstract fun dao(): TallyDao
+}
+
+internal val TALLY_MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE subjects ADD COLUMN negative INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE subjects ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE subjects SET createdAt = COALESCE((SELECT MIN(timestamp) FROM tallies WHERE subjectId = subjects.id), ?)", arrayOf<Any>(System.currentTimeMillis()))
+        db.execSQL("UPDATE subjects SET color = '#F5F5F0' WHERE position = 0 AND name = 'Little moments' AND color = '#A69AEE'")
+    }
 }
 
 class TallyRepository(context: Context) {
@@ -98,7 +112,8 @@ class TallyRepository(context: Context) {
     private val lightKey = booleanPreferencesKey("light")
     private val initializedKey = booleanPreferencesKey("initialized")
     private val database =
-        Room.databaseBuilder(context, TallyDatabase::class.java, "tally.db").build()
+        Room.databaseBuilder(context, TallyDatabase::class.java, "tally.db")
+            .addMigrations(TALLY_MIGRATION_1_2).build()
     private val dao = database.dao()
     private val lock = Mutex()
     val subjects = dao.observeSubjects()
@@ -110,7 +125,7 @@ class TallyRepository(context: Context) {
     suspend fun initialize() = lock.withLock {
         if (store.data.first()[initializedKey] != true) {
             if (dao.subjects().isEmpty()) {
-                val subject = Subject(UUID.randomUUID().toString(), "Little moments", Palette[0], 0)
+                val subject = Subject(UUID.randomUUID().toString(), "Little moments", Palette[0], 0, createdAt = System.currentTimeMillis())
                 dao.insertSubject(subject)
                 select(subject.id)
             }
@@ -151,7 +166,7 @@ class TallyRepository(context: Context) {
         store.edit { it[lightKey] = !(it[lightKey] ?: false) }
     }
 
-    suspend fun create(name: String, color: String): String = lock.withLock {
+    suspend fun create(name: String, color: String, negative: Boolean = false): String = lock.withLock {
         validateSubject(name, color)
         val subject =
             Subject(
@@ -159,15 +174,27 @@ class TallyRepository(context: Context) {
                 name.trim(),
                 color.uppercase(),
                 (dao.subjects().maxOfOrNull { it.position } ?: -1) + 1,
+                negative,
+                System.currentTimeMillis(),
             )
         dao.insertSubject(subject)
         select(subject.id)
         subject.id
     }
 
-    suspend fun edit(id: String, name: String, color: String) = lock.withLock {
+    suspend fun edit(id: String, name: String, color: String, negative: Boolean = false) = lock.withLock {
         validateSubject(name, color)
-        dao.editSubject(id, name.trim(), color.uppercase())
+        dao.editSubject(id, name.trim(), color.uppercase(), negative)
+    }
+
+    suspend fun move(id: String, direction: Int) = lock.withLock {
+        val ordered = dao.subjects().toMutableList()
+        val from = ordered.indexOfFirst { it.id == id }
+        val to = from + direction
+        if (from >= 0 && to in ordered.indices) {
+            java.util.Collections.swap(ordered, from, to)
+            database.withTransaction { ordered.forEachIndexed { index, subject -> dao.setPosition(subject.id, index) } }
+        }
     }
 
     suspend fun add(id: String, timestamp: Long) = lock.withLock {
@@ -230,6 +257,8 @@ object BackupCodec {
                                     .put("name", s.name)
                                     .put("color", s.color)
                                     .put("position", s.position)
+                                    .put("negative", s.negative)
+                                    .put("createdAt", s.createdAt)
                             )
                         }
                     },
@@ -273,13 +302,15 @@ object BackupCodec {
                         s.getString("name"),
                         s.getString("color"),
                         s.getInt("position"),
+                        s.optBoolean("negative", false),
+                        s.optLong("createdAt", 0),
                     )
                 }
             }
         require(subjects.size <= 10000) { "Backup contains too many subjects." }
         subjects.forEach {
             validateSubject(it.name, it.color)
-            require(it.id.isNotBlank() && it.id.length <= 128 && it.position >= 0)
+            require(it.id.isNotBlank() && it.id.length <= 128 && it.position >= 0 && it.createdAt >= 0)
         }
         val ids = subjects.map { it.id }.toSet()
         require(

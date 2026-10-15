@@ -5,7 +5,9 @@ package io.github.vontk.tally
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -86,14 +88,17 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
         }
         onPauseOrDispose { clockJob.cancel() }
     }
-    val accent = state.selected?.color?.let(::color) ?: color(Palette[0])
+    val selectedAccent = state.selected?.color?.let(::color) ?: color(Palette[0])
+    var swipeAccent by remember { mutableStateOf<Color?>(null) }
+    val animatedAccent by animateColorAsState(selectedAccent, label = "Tally color")
+    val accent = swipeAccent ?: animatedAccent
     val background = if (state.light) Color(0xFFF8F7FA) else Color(0xFF171719)
     val side = if (state.light) Color(0xFFF0EFF3) else Color(0xFF131315)
     val panel = if (state.light) Color.White else Color(0xFF202023)
     val text = if (state.light) Color(0xFF27252D) else Color(0xFFECECEF)
     val muted = if (state.light) Color(0xFF706B79) else Color(0xFFA2A2AA)
     val line = if (state.light) Color(0xFFDDDCE3) else Color(0xFF343438)
-    val scheme = if (state.light) lightColorScheme() else darkColorScheme()
+    val scheme = if (state.light) lightColorScheme(primary = Color(0xFF303034), onPrimary = Color.White) else darkColorScheme(primary = Color(0xFFF5F5F0), onPrimary = Color(0xFF171719))
     val actionBackgrounds = listOf(background, panel)
     val actionBackground =
         if (state.light) actionBackgrounds.minBy { it.luminance() }
@@ -228,37 +233,11 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                         .padding(horizontal = 20.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Surface(
-                                        onClick = { subjectPicker = true },
-                                        modifier = Modifier.weight(1f),
-                                        color = panel,
-                                        shape = RoundedCornerShape(14.dp),
-                                        border = BorderStroke(1.dp, line),
-                                    ) {
-                                        Row(
-                                            Modifier.heightIn(min = 52.dp)
-                                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Dot(accent, 10.dp)
-                                            Spacer(Modifier.width(10.dp))
-                                            Text(
-                                                state.selected?.name ?: "Loading…",
-                                                Modifier.weight(1f),
-                                                fontSize = 15.sp,
-                                            )
-                                            Glyph("down", description = "Choose subject")
-                                        }
+                                    Spacer(Modifier.weight(1f))
+                                    TextButton(onClick = create) {
+                                        Glyph("plus", description = "Add tally")
                                     }
-                                    TextButton(
-                                        onClick = edit,
-                                        enabled = state.selected != null,
-                                        modifier =
-                                            Modifier.padding(start = 10.dp)
-                                                .heightIn(min = 52.dp)
-                                                .border(1.dp, line, Shape)
-                                                .background(panel, Shape),
-                                    ) {
+                                    TextButton(onClick = { subjectPicker = true }) {
                                         Text("Edit")
                                     }
                                 }
@@ -275,8 +254,8 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                         Modifier.weight(1f),
                                         fontSize = 15.sp,
                                     )
-                                    TextButton(onClick = edit, enabled = state.selected != null) {
-                                        Text("Edit subject")
+                                    TextButton(onClick = { subjectPicker = true }, enabled = state.selected != null) {
+                                        Text("Edit tallies")
                                     }
                                 }
                             }
@@ -309,7 +288,7 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                                                 } else false
                                             }
                                     ) {
-                                        if (state.screen == "counter") CounterPager(state, model)
+                                        if (state.screen == "counter") CounterPager(state, model) { swipeAccent = it }
                                         else HistoryScreen(state, model)
                                     }
                                 }
@@ -325,13 +304,18 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "Your subjects",
+                        "Edit tallies",
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = { subjectPicker = false }) { Text("Done") }
                 }
+                TextButton(onClick = {
+                    subjectPicker = false
+                    model.openEditor(state.selected?.id)
+                }, enabled = state.selected != null) { Text("Edit current tally") }
+                Text("Reorder with the arrows", Modifier.padding(horizontal = 24.dp), fontSize = 13.sp)
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
                     items(state.subjects, key = { it.subject.id }) { subject ->
                         ListItem(
@@ -339,8 +323,15 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                             supportingContent = { Text("${subject.count} tallies") },
                             leadingContent = { Dot(color(subject.subject.color), 12.dp) },
                             trailingContent = {
-                                if (subject.subject.id == state.selected?.id)
-                                    Glyph("check", description = "Selected")
+                                Row {
+                                    val index = state.subjects.indexOf(subject)
+                                    TextButton(onClick = { model.moveSubject(subject.subject.id, -1) }, enabled = index > 0) { Text("↑") }
+                                    TextButton(onClick = { model.moveSubject(subject.subject.id, 1) }, enabled = index < state.subjects.lastIndex) { Text("↓") }
+                                    TextButton(onClick = {
+                                        subjectPicker = false
+                                        model.openEditor(subject.subject.id)
+                                    }) { Text("Edit") }
+                                }
                             },
                             colors =
                                 ListItemDefaults.colors(
@@ -388,8 +379,8 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                 delete =
                     if (editingSubject == null || state.preview) null
                     else ({ deletingSubjectId = editingSubject?.id }),
-                save = { name, accentHex ->
-                    model.saveSubject(editingSubject?.id, name, accentHex)
+                save = { name, accentHex, negative ->
+                    model.saveSubject(editingSubject?.id, name, accentHex, negative)
                 },
             )
         state.entries
@@ -542,9 +533,13 @@ private fun Heading(state: TallyState) {
         Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (counter) {
+            Dot(state.selected?.color?.let(::color) ?: color(Palette[0]), 12.dp)
+            Spacer(Modifier.width(10.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
-                if (counter) "Make it count." else "History",
+                if (counter) state.selected?.name.orEmpty() else "History",
                 fontSize = 24.sp,
                 lineHeight = 28.sp,
                 fontWeight = FontWeight.Bold,
@@ -567,7 +562,7 @@ private fun Heading(state: TallyState) {
 
 /** Each subject is a real swipeable page; vertical scrolling and circle taps stay independent. */
 @Composable
-private fun CounterPager(state: TallyState, model: TallyViewModel) {
+private fun CounterPager(state: TallyState, model: TallyViewModel, onAccent: (Color?) -> Unit) {
     val selectedIndex =
         state.subjects.indexOfFirst { it.subject.id == state.selected?.id }.coerceAtLeast(0)
     val pager = rememberPagerState(initialPage = selectedIndex, pageCount = { state.subjects.size })
@@ -612,6 +607,17 @@ private fun CounterPager(state: TallyState, model: TallyViewModel) {
                     }
                 }
             }
+    }
+    val accentCallback by rememberUpdatedState(onAccent)
+    DisposableEffect(Unit) {
+        onDispose { accentCallback(null) }
+    }
+    LaunchedEffect(pager, state.subjects) {
+        snapshotFlow { pager.currentPage + pager.currentPageOffsetFraction }.collect { position ->
+            val lower = kotlin.math.floor(position).toInt().coerceIn(0, state.subjects.lastIndex)
+            val upper = (lower + 1).coerceAtMost(state.subjects.lastIndex)
+            accentCallback(lerp(color(state.subjects[lower].subject.color), color(state.subjects[upper].subject.color), (position - lower).coerceIn(0f, 1f)))
+        }
     }
     HorizontalPager(
         state = pager,
@@ -698,13 +704,7 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                             letterSpacing = (-3).sp,
                             color = readableOn(accent),
                         )
-                        Text(
-                            "TALLIES TODAY",
-                            fontSize = 12.sp,
-                            letterSpacing = 1.sp,
-                            color = readableOn(accent),
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
+
                     }
                 }
                 Row(
@@ -756,7 +756,9 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
                 Stat("All time", state.entries.size, "moments", Modifier.weight(1f))
                 Stat(
                     "Streak",
-                    Moments.streak(state.counts, state.today),
+                    Moments.streak(state.counts, state.today, state.selected?.negative == true,
+                        state.selected?.createdAt?.takeIf { it > 0 }?.let { Moments.day(it, state.zone) }
+                            ?: state.counts.keys.minOrNull() ?: state.today),
                     "days",
                     Modifier.weight(1f),
                 )
@@ -1340,10 +1342,12 @@ private fun ProfileEditor(
     busy: Boolean,
     dismiss: () -> Unit,
     delete: (() -> Unit)?,
-    save: (String, String) -> Unit,
+    save: (String, String, Boolean) -> Unit,
 ) {
     var name by rememberSaveable(subject?.id) { mutableStateOf(subject?.name.orEmpty()) }
     var hex by rememberSaveable(subject?.id) { mutableStateOf(subject?.color ?: default) }
+    var negative by rememberSaveable(subject?.id) { mutableStateOf(subject?.negative ?: false) }
+    var paletteOpen by rememberSaveable { mutableStateOf(false) }
     var custom by rememberSaveable { mutableStateOf(false) }
     val validColor = Regex("#[0-9a-fA-F]{6}").matches(hex)
     ModalBottomSheet(
@@ -1390,8 +1394,16 @@ private fun ProfileEditor(
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Palette.forEach { c -> Swatch(c, hex) { if (!busy) hex = c } }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(color(hex), 20.dp)
+                TextButton(onClick = { paletteOpen = true }, enabled = !busy) { Text("Choose color") }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Negative tally")
+                    Text(if (negative) "Days without tallies build your streak." else "Days with tallies build your streak.", fontSize = 12.sp)
+                }
+                Switch(checked = negative, onCheckedChange = { negative = it }, enabled = !busy)
             }
             Text(
                 "Custom color",
@@ -1426,7 +1438,7 @@ private fun ProfileEditor(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Button(
-                onClick = { save(name.trim(), hex) },
+                onClick = { save(name.trim(), hex, negative) },
                 enabled = !busy && name.trim().isNotEmpty() && validColor,
                 shape = Shape,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -1456,6 +1468,17 @@ private fun ProfileEditor(
             Spacer(Modifier.height(16.dp))
         }
     }
+    if (paletteOpen) AlertDialog(
+        onDismissRequest = { paletteOpen = false },
+        title = { Text("Choose color") },
+        text = {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Palette.forEach { c -> Swatch(c, hex) { hex = c; paletteOpen = false } }
+            }
+        },
+        confirmButton = { TextButton(onClick = { paletteOpen = false; custom = true }) { Text("Custom color") } },
+        dismissButton = { TextButton(onClick = { paletteOpen = false }) { Text("Cancel") } },
+    )
     if (custom)
         CustomColorEditor(hex, { custom = false }) {
             hex = it
@@ -1837,22 +1860,7 @@ private fun SettingsScreen(model: TallyViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
-        Text("Example data", Modifier.padding(top = 28.dp, bottom = 12.dp), fontSize = 14.sp)
-        Column(
-            Modifier.fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outline, Shape)
-                .background(MaterialTheme.colorScheme.surface, Shape)
-        ) {
-            SettingsAction(
-                if (state.preview) "Exit preview" else "Try example data",
-                "Your records stay separate",
-                "right",
-                !busy && state.selected != null,
-            ) {
-                model.togglePreview()
-                model.screen("counter")
-            }
-        }
+
         error?.let { message ->
             Column(
                 Modifier.fillMaxWidth()

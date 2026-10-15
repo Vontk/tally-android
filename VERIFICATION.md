@@ -1,3 +1,29 @@
+# Release verification — 1.2.0
+
+Title and color move with each tally page. The header accent interpolates during swipes. Add and edit/reorder controls replace the selector, the color popup offers 20 defaults, and the app and launcher icon default to off-white on charcoal. Example-data controls and the circle's redundant label are removed.
+
+Positive tallies build streaks on days with records. Negative tallies count completed days without records; adding a record breaks the streak and undo recalculates it. Type, creation date and order persist in Room and backups. The version-1 database is migrated without deleting records or custom colors.
+
+## Automated validation
+
+[PR checks and build artifacts](https://github.com/Vontk/tally-android/pull/1/checks) record unit tests, lint, optimized release APK/AAB compilation and Android 8/API 26 device tests. Device coverage includes Room schema migration, tally persistence and undo, backup/restore, isolation, history navigation and persisted negative type/order. Visual testing is excluded by request. Room's Gradle plugin separates variant schema generation to avoid concurrent writes.
+
+## Signing and publication
+
+The original release key is on the owner's home PC and is unavailable in this environment. An installable update requires that key. The signing script checks the resulting APK against the SHA-256 signer certificate from the published 1.1.2 APK:
+
+`e46414d0062502c4dc012368960579dc9506ad3528fa16abc980edc8183ec1c0`
+
+When the key is available, build the release or download the unsigned APK from the release draft/CI artifact, then run:
+
+```bash
+TALLY_UNSIGNED_APK=/absolute/path/app-release-unsigned.apk ./scripts/sign-release.sh
+```
+
+The default key location is `~/.local/share/tally/signing/release.jks` with its password in the sibling `password` file; `TALLY_SIGNING_DIR` can select another directory. The script verifies signatures, signer identity and 16 KB ZIP alignment, and produces `artifacts/tally-1.2.0.apk` and `SHA256SUMS`. Upload those signed files to the draft release before publishing it as the latest version.
+
+## Historical verification for 1.1.2
+
 # Release verification — 1.1.2
 
 Adaptive launcher icon with a dark background and Android themed-icon support; circular clipping for tally tap feedback. README shortened and native design screenshots included.
