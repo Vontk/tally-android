@@ -1,10 +1,26 @@
-# Release verification — 1.2.0 (pending)
+# Release verification — 1.2.0
 
-Prepared title/paging updates, interpolated tally color, add/edit/reorder controls, positive/negative streaks, expanded color popup, neutral default theme and launcher icon, and a non-destructive Room 1→2 migration. Backup import accepts older files and preserves the new tally metadata on export.
+Title and color move with each tally page. The header accent interpolates during swipes. Add and edit/reorder controls replace the selector, the color popup offers 20 defaults, and the app and launcher icon default to off-white on charcoal. Example-data controls and the circle's redundant label are removed.
 
-Verified locally: production Moments.kt compiled with the bundled Kotlin compiler; a standalone harness ran the three new streak test scenarios (nine assertions), all passed. This harness uses a plain Tally value type because the Android/Room dependencies are unavailable. Migration SQL extracted from production also passed SQLite checks on empty and populated version-1 databases, preserving entries and custom colors. Full JUnit, Android lint, app compilation, Room migration validation/device tests and visual checks have NOT run. New instrumentation coverage for negative tally backup/order and revised navigation is prepared but unexecuted.
+Positive tallies build streaks on days with records. Negative tallies count completed days without records; adding a record breaks the streak and undo recalculates it. Type, creation date and order persist in Room and backups. The version-1 database is migrated without deleting records or custom colors.
 
-Gradle wrapper restored from the source repository. Full build attempt is blocked by this environment's network restriction while downloading Gradle; Android SDK is also unavailable. GitHub source write attempt returned HTTP 403 “Resource not accessible by integration”. No new APK was signed or release published. Existing release signing credentials are required to produce an installable update with the same app identity.
+## Automated validation
+
+[PR checks and build artifacts](https://github.com/Vontk/tally-android/pull/1/checks) record unit tests, lint, optimized release APK/AAB compilation and Android 8/API 26 device tests. Device coverage includes Room schema migration, tally persistence and undo, backup/restore, isolation, history navigation and persisted negative type/order. Visual testing is excluded by request. Room's Gradle plugin separates variant schema generation to avoid concurrent writes.
+
+## Signing and publication
+
+The original release key is on the owner's home PC and is unavailable in this environment. An installable update requires that key. The signing script checks the resulting APK against the SHA-256 signer certificate from the published 1.1.2 APK:
+
+`e46414d0062502c4dc012368960579dc9506ad3528fa16abc980edc8183ec1c0`
+
+When the key is available, build the release or download the unsigned APK from the release draft/CI artifact, then run:
+
+```bash
+TALLY_UNSIGNED_APK=/absolute/path/app-release-unsigned.apk ./scripts/sign-release.sh
+```
+
+The default key location is `~/.local/share/tally/signing/release.jks` with its password in the sibling `password` file; `TALLY_SIGNING_DIR` can select another directory. The script verifies signatures, signer identity and 16 KB ZIP alignment, and produces `artifacts/tally-1.2.0.apk` and `SHA256SUMS`. Upload those signed files to the draft release before publishing it as the latest version.
 
 ## Historical verification for 1.1.2
 
