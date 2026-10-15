@@ -111,6 +111,42 @@ class TallyInstrumentedTest {
     }
 
     @Test
+    fun versionOneDatabaseMigratesWithoutLosingTallies(): Unit = runBlocking {
+        val context = rule.activity.applicationContext
+        val name = "migration-${java.util.UUID.randomUUID()}.db"
+        val helper = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory().create(
+            androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(name)
+                .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
+                    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE subjects (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL, position INTEGER NOT NULL)")
+                        db.execSQL("CREATE TABLE tallies (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, subjectId TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY(subjectId) REFERENCES subjects(id) ON DELETE CASCADE)")
+                        db.execSQL("CREATE INDEX index_tallies_subjectId_timestamp ON tallies(subjectId, timestamp)")
+                        db.execSQL("INSERT INTO subjects VALUES ('original', 'Little moments', '#A69AEE', 0)")
+                        db.execSQL("INSERT INTO subjects VALUES ('custom', 'Custom', '#A69AEE', 1)")
+                        db.execSQL("INSERT INTO tallies VALUES (1, 'original', 1791628800000)")
+                    }
+                    override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                }).build()
+        )
+        helper.writableDatabase
+        helper.close()
+        val database = androidx.room.Room.databaseBuilder(context, TallyDatabase::class.java, name)
+            .addMigrations(TALLY_MIGRATION_1_2).build()
+        try {
+            val subjects = database.dao().subjects()
+            assertEquals(Palette[0], subjects.first().color)
+            assertEquals(1791628800000L, subjects.first().createdAt)
+            assertFalse(subjects.first().negative)
+            assertEquals("#A69AEE", subjects.last().color)
+            assertEquals(1, database.dao().tallies().size)
+        } finally {
+            database.close()
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test
     fun negativeTypeAndOrderSurviveBackup(): Unit = runBlocking {
         val negative = repository.create("Avoid distractions", Palette[2], negative = true)
         repository.edit(negative, "Distractions", Palette[3], negative = true)

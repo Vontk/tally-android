@@ -97,6 +97,15 @@ abstract class TallyDatabase : RoomDatabase() {
     abstract fun dao(): TallyDao
 }
 
+internal val TALLY_MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE subjects ADD COLUMN negative INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE subjects ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE subjects SET createdAt = COALESCE((SELECT MIN(timestamp) FROM tallies WHERE subjectId = subjects.id), ?)", arrayOf<Any>(System.currentTimeMillis()))
+        db.execSQL("UPDATE subjects SET color = '#F5F5F0' WHERE position = 0 AND name = 'Little moments' AND color = '#A69AEE'")
+    }
+}
+
 class TallyRepository(context: Context) {
     private val store = context.settingsStore
     private val selectedKey = stringPreferencesKey("selected")
@@ -104,14 +113,7 @@ class TallyRepository(context: Context) {
     private val initializedKey = booleanPreferencesKey("initialized")
     private val database =
         Room.databaseBuilder(context, TallyDatabase::class.java, "tally.db")
-            .addMigrations(object : androidx.room.migration.Migration(1, 2) {
-                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                    db.execSQL("ALTER TABLE subjects ADD COLUMN negative INTEGER NOT NULL DEFAULT 0")
-                    db.execSQL("ALTER TABLE subjects ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
-                    db.execSQL("UPDATE subjects SET createdAt = COALESCE((SELECT MIN(timestamp) FROM tallies WHERE subjectId = subjects.id), ?)", arrayOf<Any>(System.currentTimeMillis()))
-                    db.execSQL("UPDATE subjects SET color = '#F5F5F0' WHERE position = 0 AND name = 'Little moments' AND color = '#A69AEE'")
-                }
-            }).build()
+            .addMigrations(TALLY_MIGRATION_1_2).build()
     private val dao = database.dao()
     private val lock = Mutex()
     val subjects = dao.observeSubjects()

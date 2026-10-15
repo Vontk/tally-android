@@ -32,6 +32,7 @@ jobs:
             app/build/outputs/bundle/release/*.aab
             app/build/outputs/mapping/release/
             app/build/reports/
+            app/schemas/
   device-tests:
     runs-on: ubuntu-latest
     steps:
