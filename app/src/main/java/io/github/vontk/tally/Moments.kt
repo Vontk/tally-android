@@ -13,7 +13,13 @@ object Moments {
     fun week(counts: Map<LocalDate, Int>, today: LocalDate): Int =
         (0L..6L).sumOf { counts[today.minusDays(it)] ?: 0 }
 
-    fun streak(counts: Map<LocalDate, Int>, today: LocalDate): Int {
+    fun streak(counts: Map<LocalDate, Int>, today: LocalDate, negative: Boolean = false, started: LocalDate = today): Int {
+        if (negative) {
+            if ((counts[today] ?: 0) > 0) return 0
+            val last = counts.filter { it.value > 0 && !it.key.isAfter(today) }.keys.maxOrNull()
+            val start = maxOf(started, last?.plusDays(1) ?: started)
+            return java.time.temporal.ChronoUnit.DAYS.between(start, today).coerceAtLeast(0).toInt()
+        }
         var cursor = if ((counts[today] ?: 0) > 0) today else today.minusDays(1)
         var result = 0
         while ((counts[cursor] ?: 0) > 0) {

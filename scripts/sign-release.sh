@@ -12,7 +12,7 @@ if [[ ! -f "$signing_dir/release.jks" || ! -f "$signing_dir/password" ]]; then
 fi
 mkdir -p "$output_dir"
 "$build_tools/zipalign" -f -P 16 4 "$unsigned_apk" "$output_dir/tally-aligned.apk"
-"$build_tools/apksigner" sign --ks "$signing_dir/release.jks" --ks-key-alias tally --ks-pass "file:$signing_dir/password" --out "$output_dir/tally-1.1.2.apk" "$output_dir/tally-aligned.apk"
-"$build_tools/apksigner" verify --verbose --print-certs "$output_dir/tally-1.1.2.apk"
+"$build_tools/apksigner" sign --ks "$signing_dir/release.jks" --ks-key-alias tally --ks-pass "file:$signing_dir/password" --out "$output_dir/tally-1.2.0.apk" "$output_dir/tally-aligned.apk"
+"$build_tools/apksigner" verify --verbose --print-certs "$output_dir/tally-1.2.0.apk"
 rm "$output_dir/tally-aligned.apk"
-(cd "$output_dir" && sha256sum tally-1.1.2.apk > SHA256SUMS)
+(cd "$output_dir" && sha256sum tally-1.2.0.apk > SHA256SUMS)

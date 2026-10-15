@@ -1,3 +1,13 @@
+# Release verification — 1.2.0 (pending)
+
+Prepared title/paging updates, interpolated tally color, add/edit/reorder controls, positive/negative streaks, expanded color popup, neutral default theme and launcher icon, and a non-destructive Room 1→2 migration. Backup import accepts older files and preserves the new tally metadata on export.
+
+Verified locally: production Moments.kt compiled with the bundled Kotlin compiler; a standalone harness ran the three new streak test scenarios (nine assertions), all passed. This harness uses a plain Tally value type because the Android/Room dependencies are unavailable. Migration SQL extracted from production also passed SQLite checks on empty and populated version-1 databases, preserving entries and custom colors. Full JUnit, Android lint, app compilation, Room migration validation/device tests and visual checks have NOT run. New instrumentation coverage for negative tally backup/order and revised navigation is prepared but unexecuted.
+
+Gradle wrapper restored from the source repository. Full build attempt is blocked by this environment's network restriction while downloading Gradle; Android SDK is also unavailable. GitHub source write attempt returned HTTP 403 “Resource not accessible by integration”. No new APK was signed or release published. Existing release signing credentials are required to produce an installable update with the same app identity.
+
+## Historical verification for 1.1.2
+
 # Release verification — 1.1.2
 
 Adaptive launcher icon with a dark background and Android themed-icon support; circular clipping for tally tap feedback. README shortened and native design screenshots included.

@@ -86,7 +86,7 @@ class TallyInstrumentedTest {
             BackupCodec.decode(BackupCodec.encode(source).replace("1791628800000", "-1"))
         }
         assertThrows(Exception::class.java) {
-            BackupCodec.decode(BackupCodec.encode(source).replace("#A69AEE", "invalid"))
+            BackupCodec.decode(BackupCodec.encode(source).replace(Palette[0], "invalid"))
         }
         assertEquals(source, repository.backup())
         repository.undo("test-subject")
@@ -111,17 +111,34 @@ class TallyInstrumentedTest {
     }
 
     @Test
-    fun historyTabsAndPreviewIsolation(): Unit = runBlocking {
+    fun negativeTypeAndOrderSurviveBackup(): Unit = runBlocking {
+        val negative = repository.create("Avoid distractions", Palette[2], negative = true)
+        repository.edit(negative, "Distractions", Palette[3], negative = true)
+        repository.move(negative, -1)
+        val backup = repository.backup()
+        assertEquals(negative, backup.subjects.first().id)
+        assertTrue(backup.subjects.first().negative)
+        assertTrue(backup.subjects.first().createdAt > 0)
+        val decoded = BackupCodec.decode(BackupCodec.encode(backup))
+        repository.restore(decoded)
+        assertEquals(backup, repository.backup())
+        repository.move(negative, 1)
+        assertEquals(negative, repository.backup().subjects.last().id)
+    }
+
+    @Test
+    fun historyTabsWithoutMockData(): Unit = runBlocking {
         rule.waitUntil(10000) {
             rule.onAllNodesWithText("History").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithText("Settings").performClick()
-        rule.onNodeWithText("Try example data").performScrollTo().performClick()
+        rule.onNodeWithText("Try example data").assertDoesNotExist()
+        rule.onNodeWithText("Counter").performClick()
         rule.onNodeWithText("History").performClick()
         rule.onNodeWithText("Hours").performClick()
         rule.onNodeWithText("Month").performClick()
         rule.onNodeWithText("Days").performClick()
-        rule.onNodeWithText("Exit preview").assertExists()
+        rule.onNodeWithText("Exit preview").assertDoesNotExist()
         assertTrue(repository.backup().tallies.isEmpty())
     }
 }
