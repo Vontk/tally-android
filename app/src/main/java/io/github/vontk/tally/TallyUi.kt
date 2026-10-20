@@ -28,7 +28,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
@@ -99,11 +98,6 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
     val muted = if (state.light) Color(0xFF706B79) else Color(0xFFA2A2AA)
     val line = if (state.light) Color(0xFFDDDCE3) else Color(0xFF343438)
     val scheme = if (state.light) lightColorScheme(primary = Color(0xFF303034), onPrimary = Color.White) else darkColorScheme(primary = Color(0xFFF5F5F0), onPrimary = Color(0xFF171719))
-    val actionBackgrounds = listOf(background, panel)
-    val actionBackground =
-        if (state.light) actionBackgrounds.minBy { it.luminance() }
-        else actionBackgrounds.maxBy { it.luminance() }
-    val actionColor = actionAccent(accent, actionBackground)
     MaterialTheme(
         typography =
             Typography(
@@ -113,8 +107,6 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
             ),
         colorScheme =
             scheme.copy(
-                primary = actionColor,
-                onPrimary = readableOn(actionColor),
                 background = background,
                 onBackground = text,
                 surface = panel,
@@ -122,7 +114,7 @@ fun TallyApp(model: TallyViewModel, systemBars: (Boolean) -> Unit = {}) {
                 onSurfaceVariant = muted,
                 outline = line,
                 surfaceVariant = side,
-                secondaryContainer = accent.copy(alpha = .12f),
+                secondaryContainer = scheme.primary.copy(alpha = .12f),
                 onSecondaryContainer = text,
                 surfaceContainer = panel,
                 surfaceContainerHigh = panel,
@@ -653,7 +645,11 @@ private fun CounterScreen(state: TallyState, model: TallyViewModel) {
             pressed = false
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        overscrollEffect = null,
+    ) {
         item { Heading(state) }
         item {
             Column(
