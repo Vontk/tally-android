@@ -1,3 +1,9 @@
+# Release verification — 1.2.1
+
+The counter no longer stretches vertically at its scroll boundaries; scrolling remains available when content exceeds the screen. General buttons, menus and selection surfaces use the neutral light/dark theme instead of inheriting the selected tally's color. The counting circle, tally markers and interpolated header accent retain their chosen color.
+
+No database, backup, tally-record or signing-identity changes.
+
 # Release verification — 1.2.0
 
 Title and color move with each tally page. The header accent interpolates during swipes. Add and edit/reorder controls replace the selector, the color popup offers 20 defaults, and the app and launcher icon default to off-white on charcoal. Example-data controls and the circle's redundant label are removed.
